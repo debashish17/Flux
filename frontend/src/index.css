@@ -1,0 +1,307 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ========================================
+   PROFESSIONAL GEOMETRIC DESIGN SYSTEM
+   ======================================== */
+
+:root {
+  /* Light Professional Color Palette */
+  --glass-white: rgba(255, 255, 255, 0.95);
+  --glass-light: rgba(255, 255, 255, 0.8);
+  --glass-medium: rgba(255, 255, 255, 0.6);
+
+  /* Accent Colors - Light & Professional */
+  --accent-primary: #6366f1;
+  --accent-primary-light: #818cf8;
+  --accent-secondary: #8b5cf6;
+  --accent-success: #10b981;
+  --accent-warning: #f59e0b;
+  --accent-error: #ef4444;
+
+  /* Text Colors */
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-tertiary: #94a3b8;
+
+  /* Background */
+  --bg-gradient-start: #f8fafc;
+  --bg-gradient-end: #e0e7ff;
+
+  /* Shadows */
+  --shadow-glass: 0 4px 16px 0 rgba(31, 38, 135, 0.1);
+  --shadow-glass-hover: 0 6px 20px 0 rgba(31, 38, 135, 0.15);
+  --shadow-sm: 0 1px 4px 0 rgba(31, 38, 135, 0.08);
+
+  /* Border - Geometric */
+  --border-glass: 1px solid rgba(99, 102, 241, 0.15);
+  --border-radius: 4px;
+  --border-radius-lg: 8px;
+}
+
+* {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Minimal Background Pattern */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.015;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 20% 30%, var(--accent-primary) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, var(--accent-secondary) 0%, transparent 50%);
+  z-index: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* ========================================
+   ANIMATIONS - MINIMAL
+   ======================================== */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+
+.animate-slide-in {
+  animation: slide-in 0.2s ease-out;
+}
+
+.animate-bounce-in {
+  animation: scale-in 0.2s ease-out;
+}
+
+.animate-pop-in {
+  animation: fade-in 0.15s ease-out;
+}
+
+.animate-float {
+  /* Removed floating animation */
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Geometric Card */
+.cartoon-card {
+  background: var(--glass-white);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: var(--border-glass);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-glass);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.cartoon-card:hover {
+  box-shadow: var(--shadow-glass-hover);
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+/* Geometric Button */
+.cartoon-btn {
+  border: none;
+  border-radius: var(--border-radius);
+  font-weight: 600;
+  transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.cartoon-btn:hover:not(:disabled) {
+  box-shadow: var(--shadow-glass);
+}
+
+.cartoon-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.cartoon-btn-primary {
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary-light) 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.cartoon-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+}
+
+.cartoon-btn-secondary {
+  background: var(--glass-light);
+  color: var(--text-primary);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.cartoon-btn-success {
+  background: linear-gradient(135deg, var(--accent-success) 0%, #34d399 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.cartoon-btn-danger {
+  background: linear-gradient(135deg, var(--accent-error) 0%, #f87171 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+/* Glass Input */
+.cartoon-input {
+  background: var(--glass-white);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--border-radius);
+  padding: 0.75rem 1rem;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  color: var(--text-primary);
+}
+
+.cartoon-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.cartoon-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Glass Badge */
+.cartoon-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--glass-light);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Geometric Decorative Elements */
+.deco-circle {
+  position: absolute;
+  border-radius: 0%;
+  opacity: 0.04;
+  pointer-events: none;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  transform: rotate(45deg);
+}
+
+.deco-blob {
+  position: absolute;
+  border-radius: 0%;
+  opacity: 0.04;
+  pointer-events: none;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  transform: rotate(30deg);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary-light) 100%);
+  border-radius: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* Selection */
+::selection {
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--text-primary);
+}
+
+/* Loading Spinner */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cartoon-spinner {
+  animation: spin 1s linear infinite;
+}

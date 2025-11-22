@@ -1,0 +1,29 @@
+node_modules/
+.env
+.DS_Store
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+# VSCode
+.vscode/
+# OS
+Thumbs.db
+# Logs
+*.log
+# Frontend
+frontend/dist/
+# Backend
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+# Claude
+.claude/
