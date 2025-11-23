@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { Download, Send, RefreshCw, Loader2, Sparkles, ArrowLeft, MessageSquare, FileText, Code } from 'lucide-react';
 import ChatSidebar from '../components/ChatSidebar';
-import LatexPreview from '../components/LatexPreview';
+import DocumentPreview from '../components/DocumentPreview';
+import LatexPreview from '../components/LatexPreview'; // Keep for legacy projects
 
 export default function DocumentEditor() {
     const { id } = useParams();
@@ -124,17 +125,29 @@ export default function DocumentEditor() {
         </div>
     );
 
+    // Check if it's a LaTeX document (legacy format)
     const isLatexDocument = project.type === 'docx' &&
                            project.sections.length > 0 &&
                            project.sections[0].content &&
                            (project.sections[0].content.includes('\\documentclass') ||
                             project.sections[0].content.includes('\\begin{document}'));
 
+    // Check if it's a Markdown document (new format - has htmlContent or markdown-style content)
+    const isMarkdownDocument = project.type === 'docx' &&
+                               project.sections.length > 0 &&
+                               project.sections[0].content &&
+                               !isLatexDocument &&
+                               (project.sections[0].htmlContent ||
+                                project.sections[0].content.includes('##'));
+
+    const hasContent = project.sections.length > 0 &&
+                      project.sections.some(s => s.content && s.content.trim() !== '');
+
     console.log('isLatexDocument:', isLatexDocument);
+    console.log('isMarkdownDocument:', isMarkdownDocument);
     console.log('Project type:', project.type);
     console.log('Sections count:', project.sections.length);
-    console.log('Has content:', !!project.sections[0]?.content);
-    console.log('Content length:', project.sections[0]?.content?.length);
+    console.log('Has content:', hasContent);
 
     return (
         <>
@@ -175,8 +188,8 @@ export default function DocumentEditor() {
 
                                 {/* Right Section: Actions */}
                                 <div className="flex items-center gap-3 flex-shrink-0">
-                                    {/* View Mode Toggle for LaTeX documents */}
-                                    {isLatexDocument && (
+                                    {/* View Mode Toggle for document view */}
+                                    {(isLatexDocument || isMarkdownDocument) && (
                                         <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
                                             <button
                                                 onClick={() => setViewMode('preview')}
@@ -197,16 +210,16 @@ export default function DocumentEditor() {
                                                         ? 'bg-white text-gray-900 shadow-sm'
                                                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                                 }`}
-                                                aria-label="LaTeX code mode"
+                                                aria-label="Code view mode"
                                             >
                                                 <Code className="w-4 h-4" />
-                                                <span className="hidden sm:inline">LaTeX</span>
+                                                <span className="hidden sm:inline">{isLatexDocument ? 'LaTeX' : 'Markdown'}</span>
                                             </button>
                                         </div>
                                     )}
 
-                                    {/* Regenerate Button for LaTeX documents */}
-                                    {isLatexDocument && (
+                                    {/* Regenerate Button for documents */}
+                                    {(isLatexDocument || isMarkdownDocument) && (
                                         <>
                                             <div className="hidden lg:block w-px h-8 bg-gray-200" />
                                             <button
@@ -273,12 +286,24 @@ export default function DocumentEditor() {
 
                     {/* Document Content */}
                     <div className="flex-1 overflow-y-auto">
-                        {/* For DOCX: Only show full document (LaTeX) */}
+                        {/* For DOCX: Show preview based on format */}
                         {project.type === 'docx' ? (
-                            isLatexDocument ? (
+                            isMarkdownDocument ? (
+                                <DocumentPreview
+                                    sections={project.sections}
+                                    viewMode={viewMode}
+                                    projectTitle={project.title}
+                                />
+                            ) : isLatexDocument ? (
                                 <LatexPreview
                                     latexContent={project.sections[0].content}
                                     viewMode={viewMode}
+                                />
+                            ) : hasContent ? (
+                                <DocumentPreview
+                                    sections={project.sections}
+                                    viewMode={viewMode}
+                                    projectTitle={project.title}
                                 />
                             ) : (
                                 <div className="flex flex-col items-center justify-center py-12">

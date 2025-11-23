@@ -462,21 +462,76 @@ def _parse_structure_response(text: str, content_type: str) -> Dict[str, any]:
     return {"title": title, content_type: items}
 
 
-async def generate_full_latex_document(
-    title: str, 
-    sections: List[str], 
-    project_type: str = "docx", 
+async def generate_full_markdown_document(
+    title: str,
+    sections: List[str],
     user_prompt: str = ""
 ) -> str:
     """
-    Generate a complete, compilable LaTeX document
-    
+    Generate a complete Markdown document with all sections
+
+    Args:
+        title: Document title
+        sections: List of section names
+        user_prompt: Original user prompt for context
+
+    Returns:
+        Complete Markdown document as string
+    """
+    logger.info("=" * 80)
+    logger.info("GENERATING FULL MARKDOWN DOCUMENT")
+    logger.info(f"Title: {title}")
+    logger.info(f"Sections: {sections}")
+    logger.info(f"User Prompt: {user_prompt}")
+    logger.info("=" * 80)
+
+    if not API_KEY:
+        logger.error("GEMINI_API_KEY not set")
+        return APIError.no_api_key()
+
+    model = _get_model()
+    prompt = _build_markdown_generation_prompt(title, sections, user_prompt)
+
+    try:
+        logger.info("Sending Markdown generation request to Gemini API...")
+        markdown_content = await _generate_content_async(model, prompt)
+
+        logger.info(f"Received response: {len(markdown_content)} characters")
+
+        # Clean up the response (remove code blocks if present)
+        markdown_content = _extract_markdown_document(markdown_content)
+
+        logger.info(f"Final Markdown document: {len(markdown_content)} characters")
+        logger.info("=" * 80)
+
+        return markdown_content
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Markdown generation error: {error_msg}")
+        logger.error("=" * 80)
+
+        if APIError.is_rate_limit(error_msg):
+            return APIError.rate_limit()
+        return APIError.generation_error(error_msg)
+
+
+async def generate_full_latex_document(
+    title: str,
+    sections: List[str],
+    project_type: str = "docx",
+    user_prompt: str = ""
+) -> str:
+    """
+    LEGACY: Generate a complete, compilable LaTeX document
+    Kept for backward compatibility with existing projects
+
     Args:
         title: Document title
         sections: List of section names
         project_type: Document type (for logging)
         user_prompt: Original user prompt for context
-        
+
     Returns:
         Complete LaTeX document as string
     """
@@ -520,7 +575,7 @@ async def generate_full_latex_document(
 
 def _build_latex_generation_prompt(title: str, sections: List[str], user_prompt: str) -> str:
     """Build comprehensive prompt for LaTeX document generation"""
-    sections_formatted = "\n".join([f"  {i+1}. {section}" for i, section in enumerate(sections)])
+    sections_formatted = "\n".join([f"  - {section}" for section in sections])
     
     return f"""You are an expert LaTeX document author creating professional, publication-ready documents.
 
@@ -601,17 +656,17 @@ Now generate the complete, professional LaTeX document:"""
 def _extract_latex_document(raw_content: str) -> str:
     """
     Extract clean LaTeX document from AI response
-    
+
     Args:
         raw_content: Raw response that may contain markdown or extra text
-        
+
     Returns:
         Clean LaTeX document
     """
     lines = raw_content.split('\n')
     start_idx = None
     end_idx = None
-    
+
     # Find document boundaries
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -620,20 +675,169 @@ def _extract_latex_document(raw_content: str) -> str:
         if stripped.startswith("\\end{document}"):
             end_idx = i
             break
-    
+
     # Extract document if boundaries found
     if start_idx is not None and end_idx is not None and end_idx > start_idx:
         latex_content = '\n'.join(lines[start_idx:end_idx + 1])
         logger.info("Successfully extracted LaTeX document from response")
         return latex_content
-    
+
     # If extraction failed, try to clean up the raw content
     logger.warning("Could not find document boundaries, attempting cleanup")
-    
+
     # Remove markdown code blocks if present
     cleaned = raw_content.replace('```latex', '').replace('```', '').strip()
-    
+
     return cleaned
+
+
+def _build_markdown_generation_prompt(title: str, sections: List[str], user_prompt: str) -> str:
+    """Build comprehensive prompt for Markdown document generation"""
+    sections_formatted = "\n".join([f"  - {section}" for section in sections])
+
+    return f"""You are an expert professional writer creating comprehensive, well-structured business documents.
+
+PROJECT DETAILS:
+Title: {title}
+Required Sections:
+{sections_formatted}
+
+User Context: {user_prompt if user_prompt else "Professional business document"}
+
+Generate a COMPLETE, publication-ready Markdown document with exceptional structure and flow.
+
+CRITICAL REQUIREMENTS:
+
+1. DOCUMENT STRUCTURE:
+   - Start with the title as # {title}
+   - Use ## for main section headings (one for each required section in order)
+   - DO NOT include numbers in section headings (e.g., use "## Executive Summary" NOT "## 1. Executive Summary")
+   - Use ### for subsections within each main section to create hierarchy
+   - Use #### for sub-subsections when needed for detailed topics
+   - Create logical flow with smooth transitions between sections
+   - Include all {len(sections)} required sections in order
+
+2. CONTENT ORGANIZATION PER SECTION:
+   Each main section (##) should include:
+   - Opening paragraph that introduces the section's purpose and scope
+   - 2-4 subsections (###) that break down the topic into logical parts
+   - Mix of content types: paragraphs, lists, tables, examples
+   - Concluding insights that tie the section together
+   - Total: 300-600 words per main section
+
+3. SUBSECTION GUIDELINES:
+   Within each main section, create meaningful subsections like:
+   - Overview/Introduction
+   - Key Concepts/Components
+   - Benefits/Advantages
+   - Challenges/Considerations
+   - Best Practices/Recommendations
+   - Real-world Examples/Case Studies
+   - Implementation Steps
+   Choose subsections that fit the topic naturally
+
+4. CONTENT QUALITY:
+   - Use **bold** for critical terms, key concepts, and important data
+   - Use *italic* for subtle emphasis, definitions, or quotes
+   - Include specific examples, metrics, and real-world applications
+   - NO placeholders like "Insert content here" or "[Add details]"
+   - Use professional, authoritative, yet accessible language
+   - Support claims with logical reasoning or hypothetical scenarios
+   - Include relevant statistics, percentages, or comparative data when appropriate
+
+5. FORMATTING VARIETY:
+   - Bullet lists (- item) for features, benefits, or related points
+   - Numbered lists (1. item) for steps, sequences, or ranked items
+   - > Blockquotes for key insights, important notes, or expert tips
+   - Tables (| Column |) for comparisons, specifications, or data
+   - `inline code` for technical terms, formulas, or specific values
+   - **Bold lists** for emphasis: **Point:** Description format
+
+6. OUTPUT FORMAT:
+   - Return ONLY raw Markdown content
+   - NO code fences (no ```markdown blocks)
+   - NO explanatory text before or after
+   - Start with # {title} and include all sections
+   - Ensure professional polish and readability
+
+EXAMPLE STRUCTURE WITH DEPTH:
+
+# {title}
+
+## {{First Section Name}}
+
+Opening paragraph introducing this section's importance and what will be covered. Set context and explain why this matters to the reader.
+
+### Overview
+
+Comprehensive explanation of the fundamental concepts. Include **key terminology** in bold and provide clear definitions. Make it accessible yet thorough.
+
+### Key Components
+
+- **Component 1:** Detailed description with specific examples
+- **Component 2:** Benefits and use cases clearly articulated
+- **Component 3:** How it integrates with the broader system
+
+### Implementation Approach
+
+1. **Initial Assessment:** Analyze current state and requirements
+2. **Strategic Planning:** Define objectives and success metrics
+3. **Execution:** Deploy solutions with proper oversight
+4. **Optimization:** Continuously improve based on feedback
+
+> **Expert Tip:** Provide actionable insight or best practice that adds real value
+
+### Practical Example
+
+Describe a realistic scenario showing how this works in practice. Include specific details and outcomes that demonstrate the concept's effectiveness.
+
+## {{Second Section Name}}
+
+Continue with rich, well-organized content for each section...
+
+### Subsection Title
+
+Content with proper depth, mixing paragraphs and structured elements.
+
+| Feature | Benefit | Implementation |
+|---------|---------|----------------|
+| Feature 1 | Clear value proposition | How to deploy |
+| Feature 2 | Measurable advantage | Step-by-step guide |
+
+### Additional Subsection
+
+More detailed, valuable content with smooth transitions.
+
+## {{Continue for all {len(sections)} sections}}
+
+Each section must be comprehensive, logically structured, and professionally written with appropriate subsections.
+
+Now generate the complete, expertly-structured Markdown document:"""
+
+
+def _extract_markdown_document(raw_content: str) -> str:
+    """
+    Extract clean Markdown document from AI response
+
+    Args:
+        raw_content: Raw response that may contain markdown code blocks or extra text
+
+    Returns:
+        Clean Markdown document
+    """
+    content = raw_content.strip()
+
+    # Remove markdown code fences if present
+    if content.startswith('```markdown'):
+        content = content[len('```markdown'):].strip()
+    elif content.startswith('```'):
+        content = content[3:].strip()
+
+    if content.endswith('```'):
+        content = content[:-3].strip()
+
+    logger.info("Successfully extracted Markdown document from response")
+    return content
 
 
 def chat_with_ai(message: str, project_context: str = "") -> str:

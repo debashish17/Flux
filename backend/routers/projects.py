@@ -21,6 +21,7 @@ class SectionResponse(BaseModel):
     id: int
     title: str
     content: Optional[str]
+    htmlContent: Optional[str]
     orderIndex: int
 
     class Config:
@@ -102,8 +103,10 @@ async def generate_full_document(
     db: Prisma = Depends(database.get_db),
     current_user = Depends(auth.get_current_user)
 ):
-    """Generate entire document at once in LaTeX format for DOCX projects"""
+    """Generate entire document at once in Markdown format for DOCX projects"""
     import logging
+    import markdown_utils
+
     logger = logging.getLogger("uvicorn.error")
 
     logger.info(f"\n{'='*80}\nGENERATE FULL DOCUMENT ENDPOINT CALLED")
@@ -136,39 +139,43 @@ async def generate_full_document(
     section_titles = [s.title for s in sections]
     logger.info(f"Retrieved {len(sections)} sections: {section_titles}")
 
-    # Generate full LaTeX document
-    logger.info("Calling AI service to generate LaTeX...")
-    latex_content = await ai_service.generate_full_latex_document(
-        user_prompt=project.prompt or f"Create a comprehensive document about {project.title}",
+    # Generate full Markdown document
+    logger.info("Calling AI service to generate Markdown...")
+    markdown_content = await ai_service.generate_full_markdown_document(
         title=project.title,
-        sections=section_titles
+        sections=section_titles,
+        user_prompt=project.prompt or f"Create a comprehensive document about {project.title}"
     )
 
-    logger.info(f"LaTeX generation complete. Content length: {len(latex_content)}")
+    logger.info(f"Markdown generation complete. Content length: {len(markdown_content)}")
 
-    # Store the LaTeX content as a single piece in the first section
-    # This is a special case for whole-document generation
-    if sections:
-        logger.info(f"Storing LaTeX in section {sections[0].id}")
-        with open("backend_debug.log", "a") as f:
-            f.write(f"Storing LaTeX in section {sections[0].id}\n")
-            
+    # Split markdown into sections
+    logger.info("Splitting markdown into sections...")
+    sections_content = markdown_utils.split_markdown_by_sections(markdown_content, section_titles)
+
+    # Update each section with its content and HTML
+    for section in sections:
+        section_markdown = sections_content.get(section.title, f"## {section.title}\n\nContent not generated.")
+        section_html = markdown_utils.markdown_to_html(section_markdown)
+
+        logger.info(f"Updating section {section.id} ({section.title}): {len(section_markdown)} chars markdown, {len(section_html)} chars HTML")
+
         await db.documentsection.update(
-            where={"id": sections[0].id},
-            data={"content": latex_content}
+            where={"id": section.id},
+            data={
+                "content": section_markdown,
+                "htmlContent": section_html
+            }
         )
-        # Mark other sections as part of full document
-        for section in sections[1:]:
-            await db.documentsection.update(
-                where={"id": section.id},
-                data={"content": "[Part of full document - see first section]"}
-            )
-        logger.info("LaTeX content stored successfully")
-        with open("backend_debug.log", "a") as f:
-            f.write("LaTeX content stored successfully\n")
 
+    logger.info(f"All {len(sections)} sections updated successfully")
     logger.info(f"={'='*80}\n")
-    return {"latex_content": latex_content, "message": "Full document generated successfully"}
+
+    return {
+        "message": "Full document generated successfully",
+        "sections_count": len(sections),
+        "total_length": len(markdown_content)
+    }
 
 @router.get("/", response_model=List[ProjectResponse])
 async def get_projects(db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
