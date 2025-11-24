@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List, Optional
 from pydantic import BaseModel
 from prisma import Prisma
+from datetime import datetime
 import database, auth, ai_service
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -31,6 +32,8 @@ class ProjectResponse(BaseModel):
     id: int
     title: str
     type: str
+    createdAt: datetime
+    updatedAt: datetime
     sections: List[SectionResponse] = []
 
     class Config:
@@ -206,13 +209,76 @@ async def get_project(project_id: int, db: Prisma = Depends(database.get_db), cu
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
+@router.post("/{project_id}/clone", response_model=ProjectResponse)
+async def clone_project(project_id: int, db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
+    """Clone/duplicate an existing project with all its sections"""
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+
+    logger.info(f"Clone request for project {project_id} by user {current_user.id}")
+
+    # Fetch the original project with sections
+    original_project = await db.project.find_first(
+        where={
+            "id": project_id,
+            "userId": current_user.id
+        },
+        include={
+            "sections": {
+                "order_by": {"orderIndex": "asc"}
+            }
+        }
+    )
+
+    if not original_project:
+        logger.warning(f"Project {project_id} not found or unauthorized for user {current_user.id}")
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Create new project with "(Copy)" suffix
+    new_project = await db.project.create(
+        data={
+            "title": f"{original_project.title} (Copy)",
+            "type": original_project.type,
+            "prompt": original_project.prompt,
+            "userId": current_user.id
+        }
+    )
+
+    logger.info(f"Created cloned project {new_project.id}: {new_project.title}")
+
+    # Clone all sections
+    for section in original_project.sections:
+        await db.documentsection.create(
+            data={
+                "title": section.title,
+                "content": section.content or "",
+                "htmlContent": section.htmlContent or "",
+                "orderIndex": section.orderIndex,
+                "projectId": new_project.id
+            }
+        )
+
+    logger.info(f"Cloned {len(original_project.sections)} sections")
+
+    # Fetch the complete cloned project with sections
+    complete_project = await db.project.find_unique(
+        where={"id": new_project.id},
+        include={
+            "sections": {
+                "order_by": {"orderIndex": "asc"}
+            }
+        }
+    )
+
+    return complete_project
+
 @router.delete("/{project_id}")
 async def delete_project(project_id: int, db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
     import logging
     logger = logging.getLogger("uvicorn.error")
-    
+
     logger.info(f"Delete request for project {project_id} by user {current_user.id}")
-    
+
     project = await db.project.find_first(
         where={
             "id": project_id,

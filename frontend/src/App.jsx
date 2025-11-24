@@ -55,10 +55,10 @@ function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/create" element={<ProjectSetup />} />
-        <Route path="/editor/:id" element={<EditorRouter />} />
+        <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/create" element={<PrivateRoute><ProjectSetup /></PrivateRoute>} />
+        <Route path="/editor/:id" element={<PrivateRoute><EditorRouter /></PrivateRoute>} />
       </Routes>
     </Router>
   );

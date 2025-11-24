@@ -35,19 +35,45 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-async def get_current_user(db = Depends(database.get_db)):
-    # BYPASS AUTHENTICATION
-    # Return a dummy user for development
+async def get_current_user(token: str = Depends(oauth2_scheme), db = Depends(database.get_db)):
+    """
+    Validate JWT token and return the current authenticated user.
+
+    Args:
+        token: JWT token from Authorization header
+        db: Database connection
+
+    Returns:
+        User object from database
+
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        # Decode JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+
+        if email is None:
+            raise credentials_exception
+
+    except JWTError:
+        raise credentials_exception
+
+    # Get user from database
     from prisma import Prisma
     if isinstance(db, Prisma):
-        user = await db.user.find_unique(where={"email": "test@example.com"})
-        if not user:
-            # Create dummy user if not exists
-            user = await db.user.create(
-                data={
-                    "email": "test@example.com",
-                    "hashedPassword": "dummy_password"
-                }
-            )
+        user = await db.user.find_unique(where={"email": email})
+
+        if user is None:
+            raise credentials_exception
+
         return user
-    return None
+
+    raise credentials_exception
