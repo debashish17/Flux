@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api';
-import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, Copy, Clock, LogOut } from 'lucide-react';
+import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut } from 'lucide-react';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 
 export default function Dashboard() {
@@ -10,7 +10,6 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [deleteModal, setDeleteModal] = useState({ isOpen: false, projectId: null, projectTitle: '' });
     const [isDeleting, setIsDeleting] = useState(false);
-    const [cloningProjectId, setCloningProjectId] = useState(null);
     const [error, setError] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState('recent'); // recent, name-asc, name-desc, type
@@ -33,23 +32,6 @@ export default function Dashboard() {
                 setError('Failed to load projects');
                 setLoading(false);
             });
-    };
-
-    const handleClone = async (e, projectId) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setCloningProjectId(projectId);
-        setError('');
-
-        try {
-            const response = await api.post(`/projects/${projectId}/clone`);
-            setProjects([response.data, ...projects]);
-        } catch (error) {
-            console.error('Failed to clone project', error);
-            setError('Failed to clone project. Please try again.');
-        } finally {
-            setCloningProjectId(null);
-        }
     };
 
     const handleLogout = () => {
@@ -86,23 +68,6 @@ export default function Dashboard() {
         } finally {
             setIsDeleting(false);
         }
-    };
-
-    // Format date to relative time or absolute
-    const formatDate = (dateString) => {
-        const date = new Date(dateString);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-        const diffDays = Math.floor(diffMs / 86400000);
-
-        if (diffMins < 1) return 'Just now';
-        if (diffMins < 60) return `${diffMins}m ago`;
-        if (diffHours < 24) return `${diffHours}h ago`;
-        if (diffDays < 7) return `${diffDays}d ago`;
-
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     };
 
     // Calculate statistics
@@ -345,69 +310,57 @@ export default function Dashboard() {
                                 <p className="text-gray-500">No projects match your filters</p>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                                 {filteredAndSortedProjects.map((project) => (
-                                    <Link
+                                    <div
                                         key={project.id}
-                                        to={`/editor/${project.id}`}
-                                        className="group relative block bg-white border border-gray-200 rounded-xl p-5 hover:border-blue-300 hover:shadow-md transition-all"
+                                        className="group relative bg-white border border-gray-200 rounded-xl hover:border-blue-400 hover:shadow-lg transition-all duration-200"
                                     >
-                                        <div className="flex items-start gap-4 mb-4">
-                                            {/* Icon */}
-                                            <div className="flex-shrink-0 w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center">
-                                                {project.type === 'docx' ? (
-                                                    <FileText className="w-5 h-5 text-gray-600" />
-                                                ) : (
-                                                    <Presentation className="w-5 h-5 text-gray-600" />
-                                                )}
+                                        {/* Delete Button - Absolute positioned, subtle */}
+                                        <button
+                                            onClick={(e) => openDeleteModal(e, project.id, project.title)}
+                                            className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all z-10"
+                                            title="Delete project"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+
+                                        {/* Card Content - Clickable Link */}
+                                        <Link
+                                            to={`/editor/${project.id}`}
+                                            className="block p-5"
+                                        >
+                                            {/* Icon and Title */}
+                                            <div className="flex items-start gap-4">
+                                                {/* Icon with gradient background */}
+                                                <div className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center ${
+                                                    project.type === 'docx'
+                                                        ? 'bg-gradient-to-br from-blue-50 to-blue-100'
+                                                        : 'bg-gradient-to-br from-purple-50 to-purple-100'
+                                                }`}>
+                                                    {project.type === 'docx' ? (
+                                                        <FileText className="w-6 h-6 text-blue-600" />
+                                                    ) : (
+                                                        <Presentation className="w-6 h-6 text-purple-600" />
+                                                    )}
+                                                </div>
+
+                                                {/* Title */}
+                                                <div className="flex-1 min-w-0 pt-1">
+                                                    <h3 className="text-lg font-semibold text-gray-900 mb-2 line-clamp-2 leading-snug">
+                                                        {project.title}
+                                                    </h3>
+                                                    <span className={`inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full ${
+                                                        project.type === 'docx'
+                                                            ? 'bg-blue-100 text-blue-700'
+                                                            : 'bg-purple-100 text-purple-700'
+                                                    }`}>
+                                                        {project.type === 'docx' ? 'Document' : 'Presentation'}
+                                                    </span>
+                                                </div>
                                             </div>
-
-                                            {/* Content */}
-                                            <div className="flex-1 min-w-0">
-                                                <h3 className="text-base font-medium text-gray-900 mb-1 truncate">
-                                                    {project.title}
-                                                </h3>
-                                                <span className="inline-block text-xs text-gray-500 uppercase font-medium px-2 py-1 bg-gray-100 rounded">
-                                                    {project.type}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {/* Last Modified */}
-                                        <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-3">
-                                            <Clock className="w-3.5 h-3.5" />
-                                            <span>Updated {formatDate(project.updatedAt)}</span>
-                                        </div>
-
-                                        {/* Action buttons */}
-                                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                                onClick={(e) => handleClone(e, project.id)}
-                                                disabled={cloningProjectId === project.id}
-                                                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
-                                                title="Clone project"
-                                            >
-                                                {cloningProjectId === project.id ? (
-                                                    <>
-                                                        <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
-                                                        Cloning...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Copy className="w-4 h-4" />
-                                                        Clone
-                                                    </>
-                                                )}
-                                            </button>
-                                            <button
-                                                onClick={(e) => openDeleteModal(e, project.id, project.title)}
-                                                className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                                                title="Delete project"
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    </Link>
+                                        </Link>
+                                    </div>
                                 ))}
                             </div>
                         )}
