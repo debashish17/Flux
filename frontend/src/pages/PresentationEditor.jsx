@@ -18,7 +18,8 @@ export default function PresentationEditor() {
   const [generatingSlides, setGeneratingSlides] = useState(new Set());
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [autoGenNotice, setAutoGenNotice] = useState("");
-  
+  const [feedbackCache, setFeedbackCache] = useState({}); // Cache feedback for all sections
+
   // Editing states
   const [editingTitle, setEditingTitle] = useState(null);
   const [editingBullet, setEditingBullet] = useState(null);
@@ -37,6 +38,14 @@ export default function PresentationEditor() {
     try {
       const res = await api.get(`/projects/${id}`);
       setProject(res.data);
+
+      // Load feedback in batch (single API call instead of N calls)
+      try {
+        const feedbackRes = await api.get(`/feedback/projects/${id}/batch`);
+        setFeedbackCache(feedbackRes.data);
+      } catch (error) {
+        console.error('Failed to load feedback batch:', error);
+      }
       // Auto-generate content for empty sections
       const emptySections = res.data.sections.filter(s => !s.content || s.content.trim() === '');
       if (emptySections.length > 0) {
@@ -55,6 +64,8 @@ export default function PresentationEditor() {
     const totalSlides = emptySections.length;
     setAutoGenNotice(`AI is generating content for ${totalSlides} slide${totalSlides > 1 ? 's' : ''}...`);
 
+    let failedSlides = [];
+
     // Process slides in batches of 10
     const batchSize = 10;
     for (let batchStart = 0; batchStart < emptySections.length; batchStart += batchSize) {
@@ -66,17 +77,32 @@ export default function PresentationEditor() {
 
       for (let i = 0; i < batch.length; i++) {
         const section = batch[i];
-        try {
-          const res = await api.post(`/generate/section/${section.id}`);
-          setProject(prev => ({
-            ...prev,
-            sections: prev.sections.map(s =>
-              s.id === section.id ? { ...s, content: res.data.content } : s
-            )
-          }));
-        } catch (error) {
-          console.error(`Failed to generate section ${section.title}`, error);
+        let retries = 3;
+        let success = false;
+
+        while (retries > 0 && !success) {
+          try {
+            const res = await api.post(`/generate/section/${section.id}`);
+            setProject(prev => ({
+              ...prev,
+              sections: prev.sections.map(s =>
+                s.id === section.id ? { ...s, content: res.data.content } : s
+              )
+            }));
+            success = true;
+          } catch (error) {
+            retries--;
+            console.error(`Failed to generate section ${section.title} (${3 - retries}/3 attempts)`, error);
+            if (retries > 0) {
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+              // Failed after all retries
+              failedSlides.push(section.title);
+            }
+          }
         }
+
         if (i < batch.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -86,8 +112,14 @@ export default function PresentationEditor() {
       }
     }
     setAutoGenerating(false);
-    setAutoGenNotice("All slides generated successfully!");
-    setTimeout(() => setAutoGenNotice(""), 3000);
+
+    if (failedSlides.length > 0) {
+      setAutoGenNotice(`Generation completed with ${failedSlides.length} failed slide(s). Refresh to retry.`);
+      setTimeout(() => setAutoGenNotice(""), 5000);
+    } else {
+      setAutoGenNotice("All slides generated successfully!");
+      setTimeout(() => setAutoGenNotice(""), 3000);
+    }
   };
   // Scroll tracking for active slide
   useEffect(() => {
@@ -289,37 +321,54 @@ export default function PresentationEditor() {
     }
   };
 
+  const handleFeedbackChange = (sectionId, newFeedbackType) => {
+    setFeedbackCache(prev => ({
+      ...prev,
+      [sectionId]: { userFeedback: newFeedbackType }
+    }));
+  };
+
   const handleGenerate = async (sectionId) => {
+    // Check cached feedback first (avoid extra API call)
+    const cachedFeedback = feedbackCache[sectionId]?.userFeedback;
+
+    // If user liked the slide, show warning and prevent regeneration
+    if (cachedFeedback === 'like') {
+      const confirmRegenerate = window.confirm(
+        "You marked this slide as 'liked'. Regenerating will create new content. Are you sure you want to continue?"
+      );
+      if (!confirmRegenerate) {
+        return; // User cancelled, don't regenerate
+      }
+    }
+
     setGeneratingSlides(prev => new Set(prev).add(sectionId));
+
+    const isRegeneratingWithFeedback = cachedFeedback === 'dislike';
+
     try {
-      // Check if user has disliked this section and provided feedback
-      const feedbackRes = await api.get(`/feedback/sections/${sectionId}`);
+      if (isRegeneratingWithFeedback) {
+        // Show notice that we're applying feedback
+        setAutoGenNotice("Applying your feedback...");
 
-      if (feedbackRes.data.userFeedback === 'dislike') {
-        // Get feedback comments
-        const commentsRes = await api.get(`/feedback/sections/${sectionId}/comments`);
+        // Regenerate with feedback - backend will fetch comments
+        const res = await api.post(`/feedback/sections/${sectionId}/regenerate`);
 
-        if (commentsRes.data.length > 0) {
-          // Regenerate with feedback
-          const res = await api.post(`/feedback/sections/${sectionId}/regenerate`, {
-            feedback: commentsRes.data[0].comment
-          });
-          setProject(prev => ({
-            ...prev,
-            sections: prev.sections.map(s =>
-              s.id === sectionId ? { ...s, content: res.data.content } : s
-            )
-          }));
-        } else {
-          // User disliked but didn't provide feedback, do regular generation
-          const res = await api.post(`/generate/section/${sectionId}`);
-          setProject(prev => ({
-            ...prev,
-            sections: prev.sections.map(s =>
-              s.id === sectionId ? { ...s, content: res.data.content } : s
-            )
-          }));
-        }
+        setProject(prev => ({
+          ...prev,
+          sections: prev.sections.map(s =>
+            s.id === sectionId ? { ...s, content: res.data.content } : s
+          )
+        }));
+
+        // Clear feedback cache - backend deletes the feedback record
+        setFeedbackCache(prev => ({
+          ...prev,
+          [sectionId]: { userFeedback: null }
+        }));
+
+        setAutoGenNotice("Slide regenerated with your feedback!");
+        setTimeout(() => setAutoGenNotice(""), 3000);
       } else {
         // No dislike feedback, do regular generation
         const res = await api.post(`/generate/section/${sectionId}`);
@@ -332,6 +381,8 @@ export default function PresentationEditor() {
       }
     } catch (error) {
       console.error('Generation failed', error);
+      setAutoGenNotice("Failed to regenerate slide");
+      setTimeout(() => setAutoGenNotice(""), 3000);
     } finally {
       setGeneratingSlides(prev => {
         const newSet = new Set(prev);
@@ -668,11 +719,13 @@ export default function PresentationEditor() {
                           </div>
                         </div>
 
-                        {/* Feedback Section - key forces re-render when content changes */}
+                        {/* Feedback Section - key forces re-render when content or feedback changes */}
                         <div className="mt-6 pt-4 border-t border-gray-200">
                           <SectionFeedback
-                            key={`feedback-${section.id}-${section.content?.substring(0, 50)}`}
+                            key={`feedback-${section.id}-${feedbackCache[section.id]?.userFeedback || 'neutral'}`}
                             sectionId={section.id}
+                            initialFeedback={feedbackCache[section.id]?.userFeedback}
+                            onFeedbackChange={(newType) => handleFeedbackChange(section.id, newType)}
                           />
                         </div>
                       </div>

@@ -88,6 +88,9 @@ export default function ProjectSetup() {
                 prompt: userPrompt
             });
 
+            // Set flag to refresh dashboard when user returns
+            sessionStorage.setItem('refresh_dashboard', 'true');
+
             // Navigate to the editor
             navigate(`/editor/${response.data.id}`);
         } catch (error) {

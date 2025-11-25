@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api';
-import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut } from 'lucide-react';
+import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut, RefreshCw } from 'lucide-react';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 
 export default function Dashboard() {
@@ -17,14 +17,42 @@ export default function Dashboard() {
     const [showFilters, setShowFilters] = useState(false);
 
     useEffect(() => {
-        loadProjects();
+        // Check if we should force refresh (e.g., after creating a project)
+        const shouldRefresh = sessionStorage.getItem('refresh_dashboard');
+        if (shouldRefresh) {
+            sessionStorage.removeItem('refresh_dashboard');
+            loadProjects(true); // Force refresh
+        } else {
+            loadProjects();
+        }
     }, []);
 
-    const loadProjects = () => {
+    const loadProjects = (forceRefresh = false) => {
+        // Try to load from cache first
+        const cachedData = sessionStorage.getItem('dashboard_projects');
+        const cacheTimestamp = sessionStorage.getItem('dashboard_cache_timestamp');
+        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+        // Use cache if it exists, is valid, and not forcing refresh
+        if (!forceRefresh && cachedData && cacheTimestamp) {
+            const cacheAge = Date.now() - parseInt(cacheTimestamp);
+            if (cacheAge < CACHE_DURATION) {
+                console.log('Loading projects from cache');
+                setProjects(JSON.parse(cachedData));
+                setLoading(false);
+                return;
+            }
+        }
+
+        // Fetch from API
+        console.log('Fetching projects from API');
         setLoading(true);
         api.get('/projects/')
             .then(res => {
                 setProjects(res.data);
+                // Cache the data
+                sessionStorage.setItem('dashboard_projects', JSON.stringify(res.data));
+                sessionStorage.setItem('dashboard_cache_timestamp', Date.now().toString());
                 setLoading(false);
             })
             .catch(err => {
@@ -60,7 +88,13 @@ export default function Dashboard() {
             await api.delete(`/projects/${deleteModal.projectId}`);
 
             // Update UI only after successful deletion
-            setProjects(projects.filter(p => p.id !== deleteModal.projectId));
+            const updatedProjects = projects.filter(p => p.id !== deleteModal.projectId);
+            setProjects(updatedProjects);
+
+            // Update cache with new data
+            sessionStorage.setItem('dashboard_projects', JSON.stringify(updatedProjects));
+            sessionStorage.setItem('dashboard_cache_timestamp', Date.now().toString());
+
             closeDeleteModal();
         } catch (error) {
             console.error('Failed to delete project', error);
@@ -123,6 +157,14 @@ export default function Dashboard() {
                 <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
                     <h1 className="text-xl font-semibold text-gray-900">My Projects</h1>
                     <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => loadProjects(true)}
+                            disabled={loading}
+                            className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                            title="Refresh projects"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        </button>
                         <button
                             onClick={handleLogout}
                             className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 text-sm font-medium transition-colors"

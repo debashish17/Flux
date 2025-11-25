@@ -164,35 +164,45 @@ REMEMBER: Great slides support speech, they don't replace it. Keep it minimal an
 
 def _build_document_section_prompt(project_title: str, section_title: str) -> str:
     """Build optimized prompt for document section content"""
-    return f"""You are a professional business writer creating clear, authoritative document content.
+    return f"""You are a subject matter expert writing content for a professional document.
 
-DOCUMENT TITLE: {project_title}
-SECTION: {section_title}
+DOCUMENT: {project_title}
+CURRENT SECTION: {section_title}
 
-Write comprehensive, professional content for this section.
+CONTEXT ANALYSIS:
+- This section is part of a document about: {project_title}
+- The section specifically covers: {section_title}
+- Write content that directly addresses THIS specific topic within the document's broader context
+- Use terminology, examples, and concepts relevant to this subject matter
+
+Write comprehensive, expert-level content for this section.
 
 STRUCTURE REQUIREMENTS:
 • Write 2-4 well-developed paragraphs (200-400 words total)
 • Each paragraph should have:
   - A clear topic sentence that previews the main idea
-  - 3-5 supporting sentences with specific details
+  - 3-5 supporting sentences with specific, relevant details
   - A concluding sentence that connects to the next paragraph or summarizes
 
 CONTENT REQUIREMENTS:
-• Include concrete examples, data points, or real-world applications
-• Use professional yet accessible language (avoid unnecessary jargon)
-• Maintain an authoritative, confident tone
-• Be specific and actionable rather than vague or theoretical
+• STAY ON TOPIC: Write specifically about "{section_title}" in the context of "{project_title}"
+• Include concrete examples, realistic data, or domain-specific applications
+• Use appropriate technical or domain terminology (not generic business speak)
+• Demonstrate expertise in this particular subject area
+• Be specific and actionable with real insights, not vague generalities
 • Use transitions between paragraphs for smooth flow
+• Avoid filler phrases like "In today's world" or "It's important to note"
 
 FORMATTING RULES:
 ✗ NO markdown formatting (no **, ##, _italics_, etc.)
 ✗ NO bullet points or lists (write in paragraph form)
-✗ NO placeholder text like "[insert example]"
+✗ NO placeholder text like "[insert example]" or "[add details]"
+✗ NO generic content that could apply to any topic
 ✓ Separate paragraphs with double line breaks
 ✓ Write complete, polished prose ready for publication
+✓ Focus on substance and specificity relevant to this exact topic
 
-Focus on delivering genuine value and insight, not filler content."""
+Write as an expert who truly understands {project_title} and this specific aspect of it."""
 
 
 def refine_section_content(current_content: str, instruction: str, project_type: str) -> str:
@@ -401,45 +411,66 @@ def plan_presentation_structure(user_prompt: str) -> Dict[str, any]:
 
 def _build_presentation_planning_prompt(user_prompt: str) -> str:
     """Build prompt for presentation structure planning"""
-    return f"""You are an expert presentation strategist analyzing a client's needs.
+    return f"""You are an expert presentation strategist. Create a clean, professional slide structure.
 
 CLIENT REQUEST: "{user_prompt}"
 
-Analyze this request and design an optimal presentation structure.
+CRITICAL RULES FOR SLIDE TITLES:
+- Each slide title must be SHORT (maximum 5-7 words)
+- Use PLAIN TEXT ONLY
+- NO asterisks, NO bold formatting (**text**)
+- NO "Slide 1:", "Slide 2:" prefixes
+- NO colons followed by explanations
+- NO parentheses with clarifications
+- NO brackets or placeholders
+- Simple, direct topic names only
 
-PLANNING CONSIDERATIONS:
-1. What is the core message or goal?
-2. Who is the target audience?
-3. What key points must be covered?
-4. What's the logical flow from opening to close?
-5. How many slides create impact without overwhelming? (Typically 6-12)
+REQUIREMENTS:
+- Generate 6-10 slides
+- Each slide = one simple topic
+- Professional but concise
 
-OUTPUT FORMAT (use exactly this format):
-TITLE: [Compelling, clear presentation title that captures the essence]
+OUTPUT FORMAT:
+TITLE: Presentation title here
 
 SLIDES:
-- [Slide 1: Strong opening that hooks the audience]
-- [Slide 2: Context or problem statement]
-- [Slide 3: Main point or solution component 1]
-- [Slide 4: Main point or solution component 2]
-- [Slide 5: Main point or solution component 3]
-- [Continue as needed...]
-- [Final slide: Strong conclusion with call-to-action]
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
 
-EXAMPLE OUTPUT:
-TITLE: Revolutionizing Customer Experience Through AI
+CORRECT EXAMPLES:
+TITLE: AI Healthcare Solutions
 SLIDES:
-- Why Customer Experience Matters Today
-- The Challenge: Current Pain Points
-- Our AI-Powered Solution Overview
-- Key Feature: Intelligent Automation
-- Key Feature: Predictive Analytics
-- Real-World Success Stories
-- Implementation Roadmap
-- ROI and Expected Outcomes
-- Next Steps and Call to Action
+- Market Overview
+- Problem Statement
+- Our Technology
+- Clinical Results
+- Business Model
+- Investment Opportunity
 
-Now analyze the client's request and provide the optimal structure:"""
+TITLE: Sustainable Fashion Initiative
+SLIDES:
+- Industry Problems
+- Our Solution
+- Manufacturing Process
+- Product Portfolio
+- Market Strategy
+- Financial Outlook
+
+WRONG - DO NOT DO THIS:
+- **Slide 1: Introduction** (The Hook)
+- The AI Imperative: Defining the current reality
+- Market Overview and Competitive Analysis (Deep Dive)
+
+RIGHT - DO THIS:
+- Introduction
+- Market Reality
+- Competitive Analysis
+
+Now create the structure:"""
 
 
 def plan_document_structure(user_prompt: str) -> Dict[str, any]:
@@ -518,22 +549,24 @@ Now analyze the client's request and provide the optimal structure:"""
 def _parse_structure_response(text: str, content_type: str) -> Dict[str, any]:
     """
     Parse AI response into structured format
-    
+
     Args:
         text: Raw AI response text
         content_type: Either 'slides' or 'sections'
-        
+
     Returns:
         Parsed structure dictionary
     """
+    import re
+
     lines = text.split('\n')
     title = ""
     items = []
-    
+
     in_items_section = False
     for line in lines:
         line = line.strip()
-        
+
         if line.startswith('TITLE:'):
             title = line.replace('TITLE:', '').strip()
         elif line.upper().startswith(content_type.upper() + ':'):
@@ -541,19 +574,65 @@ def _parse_structure_response(text: str, content_type: str) -> Dict[str, any]:
         elif in_items_section and line.startswith('-'):
             item_title = line.lstrip('- ').strip()
             if item_title:
-                items.append(item_title)
-    
+                # Aggressive cleanup for slide titles - ORDER MATTERS!
+                # Step 1: Remove **bold** markdown FIRST (before checking for Slide X:)
+                item_title = re.sub(r'\*\*(.+?)\*\*', r'\1', item_title)
+                # Step 2: Remove any remaining single asterisks
+                item_title = item_title.replace('*', '')
+                # Step 3: Remove "Slide X:" prefix (case insensitive)
+                item_title = re.sub(r'^Slide\s+\d+:\s*', '', item_title, flags=re.IGNORECASE)
+                # Step 4: Remove brackets and their content [like this]
+                item_title = re.sub(r'\[.*?\]', '', item_title)
+                # Step 5: Remove parentheses and their content
+                item_title = re.sub(r'\s*\([^)]*\)', '', item_title)
+                # Step 6: Clean up extra whitespace
+                item_title = re.sub(r'\s+', ' ', item_title).strip()
+
+                if item_title:  # Only add if still has content after cleanup
+                    items.append(item_title)
+
+    # STRICT cap at 10 slides for presentations - enforce before any other processing
+    if content_type == "slides":
+        if len(items) > 10:
+            logger.warning(f"AI generated {len(items)} slides, enforcing limit of 10")
+            items = items[:10]
+        logger.info(f"Final slide count: {len(items)}")
+
     # Provide sensible defaults if parsing fails
     if not title:
         title = "Untitled Presentation" if content_type == "slides" else "Untitled Document"
-    
+
+    # Aggressive title cleanup for presentations
+    if content_type == "slides":
+        # Remove ALL brackets and their content [like this]
+        title = re.sub(r'\[.*?\]', '', title)
+        # Remove markdown bold **text**
+        title = re.sub(r'\*\*(.+?)\*\*', r'\1', title)
+        # Remove parentheses and content
+        title = re.sub(r'\s*\([^)]*\)', '', title)
+        # Remove any asterisks
+        title = title.replace('*', '')
+        # Clean up extra spaces
+        title = re.sub(r'\s+', ' ', title).strip()
+        # Remove trailing punctuation artifacts
+        title = re.sub(r'\s*[:;,]\s*$', '', title)
+        # Remove leading/trailing colons that might be left
+        title = title.strip(':').strip()
+
+        # If title became empty, too short, or contains "with" at the end (artifact), use fallback
+        if not title or len(title) < 5 or title.lower().endswith('with'):
+            logger.warning(f"Title cleanup resulted in invalid title: '{title}', using fallback")
+            title = "Untitled Presentation"
+
     if not items:
         items = (
-            ["Opening", "Main Content", "Closing"] 
-            if content_type == "slides" 
+            ["Opening", "Main Content", "Closing"]
+            if content_type == "slides"
             else ["Introduction", "Main Body", "Conclusion"]
         )
-    
+        logger.warning(f"No items parsed, using defaults")
+
+    logger.info(f"Parsed structure - Title: '{title}', Items: {len(items)}")
     return {"title": title, content_type: items}
 
 
@@ -618,13 +697,21 @@ def _build_markdown_generation_prompt(title: str, sections: List[str], user_prom
     return f"""You are an expert professional writer creating comprehensive, well-structured business documents.
 
 PROJECT DETAILS:
-Title: {title}
+Document Title: {title}
 Required Sections:
 {sections_formatted}
 
-User Context: {user_prompt if user_prompt else "Professional business document"}
+Original User Request: "{user_prompt}"
 
-Generate a COMPLETE, publication-ready Markdown document with exceptional structure and flow.
+CONTEXT UNDERSTANDING:
+First, carefully analyze the user's request to understand:
+- What specific topic or subject they want documented
+- What industry, domain, or field this relates to
+- What level of technical depth is appropriate
+- What the purpose and audience of this document should be
+- Any specific focus areas mentioned in their request
+
+Generate a COMPLETE, publication-ready Markdown document that DIRECTLY addresses the user's request with relevant, contextual content.
 
 CRITICAL REQUIREMENTS:
 
@@ -656,14 +743,18 @@ CRITICAL REQUIREMENTS:
    - Implementation Steps
    Choose subsections that fit the topic naturally
 
-4. CONTENT QUALITY:
-   - Use **bold** for critical terms, key concepts, and important data
-   - Use *italic* for subtle emphasis, definitions, or quotes
-   - Include specific examples, metrics, and real-world applications
+4. CONTENT QUALITY AND RELEVANCE:
+   - STAY ON TOPIC: Every section must directly relate to the document title and user's original request
+   - AVOID GENERIC CONTENT: Don't write vague, generic business content that could apply to any topic
+   - BE SPECIFIC: Use concrete examples, specific terminology, and domain-relevant details
+   - DEMONSTRATE EXPERTISE: Show deep understanding of the actual subject matter requested
+   - Use **bold** for critical terms, key concepts, and important data specific to this topic
+   - Use *italic* for definitions, technical terms, or emphasis
+   - Include realistic examples, metrics, and applications relevant to THIS specific subject
    - NO placeholders like "Insert content here" or "[Add details]"
-   - Use professional, authoritative, yet accessible language
-   - Support claims with logical reasoning or hypothetical scenarios
-   - Include relevant statistics, percentages, or comparative data when appropriate
+   - NO generic business filler like "In today's fast-paced world" or "leveraging synergies"
+   - Support claims with logical reasoning, industry-specific knowledge, or realistic scenarios
+   - When mentioning data, use plausible numbers/percentages that fit the context
 
 5. FORMATTING VARIETY:
    - Bullet lists (- item) for features, benefits, or related points
@@ -732,7 +823,14 @@ More detailed, valuable content with smooth transitions.
 
 Each section must be comprehensive, logically structured, and professionally written with appropriate subsections.
 
-Now generate the complete, expertly-structured Markdown document:"""
+CRITICAL REMINDER:
+- Review the user's original request: "{user_prompt}"
+- Ensure EVERY section addresses THIS specific topic, not generic business content
+- Use domain-specific terminology, concepts, and examples
+- Write as a subject matter expert who deeply understands "{title}"
+- Make the content valuable and informative for someone researching this exact topic
+
+Now generate the complete, expertly-structured, highly-relevant Markdown document:"""
 
 
 def _extract_markdown_document(raw_content: str) -> str:

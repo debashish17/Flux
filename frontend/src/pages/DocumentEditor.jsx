@@ -19,6 +19,7 @@ export default function DocumentEditor() {
     const [chatOpen, setChatOpen] = useState(false);
     const [viewMode, setViewMode] = useState('preview'); // 'preview' or 'code'
     const [refreshKey, setRefreshKey] = useState(0); // Force refresh of feedback components
+    const [feedbackCache, setFeedbackCache] = useState({}); // Cache feedback for all sections
 
     useEffect(() => {
         loadProject();
@@ -30,6 +31,14 @@ export default function DocumentEditor() {
             console.log('Loaded project:', res.data);
             console.log('First section content:', res.data.sections[0]?.content?.substring(0, 200));
             setProject(res.data);
+
+            // Load feedback in batch (single API call instead of N calls)
+            try {
+                const feedbackRes = await api.get(`/feedback/projects/${id}/batch`);
+                setFeedbackCache(feedbackRes.data);
+            } catch (error) {
+                console.error('Failed to load feedback batch:', error);
+            }
 
             // Auto-generate full document for DOCX if empty
             if (res.data.type === 'docx' && res.data.sections.length > 0) {
@@ -128,6 +137,13 @@ export default function DocumentEditor() {
             await new Promise(resolve => setTimeout(resolve, 500));
             const projectRes = await api.get(`/projects/${id}`);
             setProject(projectRes.data);
+
+            // Update feedback cache - reset disliked sections to null
+            const updatedCache = { ...feedbackCache };
+            dislikedSections.forEach(section => {
+                updatedCache[section.id] = { userFeedback: null };
+            });
+            setFeedbackCache(updatedCache);
 
             // Force refresh of all feedback components
             setRefreshKey(prev => prev + 1);
@@ -415,6 +431,7 @@ export default function DocumentEditor() {
                                     sections={project.sections}
                                     viewMode={viewMode}
                                     projectTitle={project.title}
+                                    feedbackCache={feedbackCache}
                                     onSectionUpdate={handlePreviewSectionUpdate}
                                     onSectionRefresh={(updatedSection) => {
                                         // Update the section in the project state

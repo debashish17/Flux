@@ -10,7 +10,7 @@ import './DocumentPreview.css';
  * Renders HTML preview with inline rich text editing
  * Auto-saves on click outside or Ctrl+S
  */
-export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', onSectionUpdate, onSectionRefresh }) {
+export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', feedbackCache = {}, onSectionUpdate, onSectionRefresh }) {
   const [editingSection, setEditingSection] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const turndownService = new TurndownService();
@@ -222,6 +222,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
                         <SectionFeedback
                           key={`feedback-${section.id}-${section.htmlContent?.substring(0, 50)}`}
                           sectionId={section.id}
+                          initialFeedback={feedbackCache[section.id]?.userFeedback}
                         />
                       </div>
                     </>
@@ -239,6 +240,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
                       <SectionFeedback
                         key={`feedback-${section.id}-${section.content?.substring(0, 50)}`}
                         sectionId={section.id}
+                        initialFeedback={feedbackCache[section.id]?.userFeedback}
                       />
                     </div>
                   </div>

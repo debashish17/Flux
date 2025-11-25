@@ -17,7 +17,7 @@ class CommentRequest(BaseModel):
     comment: str
 
 class RegenerateFeedbackRequest(BaseModel):
-    feedback: str  # User's feedback on why they dislike it
+    feedback: Optional[str] = None  # User's feedback on why they dislike it (optional - will fetch from comments if not provided)
 
 
 @router.post("/sections/{section_id}")
@@ -71,6 +71,50 @@ async def add_feedback(
     except Exception as e:
         logger.error(f"Failed to upsert feedback: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save feedback: {str(e)}")
+
+
+@router.get("/projects/{project_id}/batch")
+async def get_project_feedback_batch(
+    project_id: int,
+    db: Prisma = Depends(database.get_db),
+    current_user = Depends(auth.get_current_user)
+):
+    """Get feedback for all sections in a project (batch request to reduce API calls)"""
+    logger.info(f"GET /feedback/projects/{project_id}/batch")
+
+    # Verify project exists and user has access
+    project = await db.project.find_unique(
+        where={"id": project_id},
+        include={"sections": True}
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.userId != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # Get all section IDs
+    section_ids = [section.id for section in project.sections]
+
+    # Get all feedback for these sections in one query
+    all_feedback = await db.sectionfeedback.find_many(
+        where={
+            "sectionId": {"in": section_ids},
+            "userId": current_user.id
+        }
+    )
+
+    # Build response: {sectionId: {userFeedback: "like"/"dislike"/null}}
+    feedback_map = {}
+    for section_id in section_ids:
+        user_feedback_record = next((f for f in all_feedback if f.sectionId == section_id), None)
+        feedback_map[section_id] = {
+            "userFeedback": user_feedback_record.type if user_feedback_record else None
+        }
+
+    logger.info(f"Returned batch feedback for {len(section_ids)} sections")
+    return feedback_map
 
 
 @router.get("/sections/{section_id}")
@@ -150,9 +194,9 @@ async def remove_feedback(
 @router.post("/sections/{section_id}/regenerate")
 async def regenerate_with_feedback(
     section_id: int,
-    request: RegenerateFeedbackRequest,
     db: Prisma = Depends(database.get_db),
-    current_user = Depends(auth.get_current_user)
+    current_user = Depends(auth.get_current_user),
+    request: RegenerateFeedbackRequest = None
 ):
     """Regenerate section content based on user feedback"""
     logger.info(f"POST /feedback/sections/{section_id}/regenerate")
@@ -170,10 +214,31 @@ async def regenerate_with_feedback(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     try:
+        # Get feedback text - either from request or from comments
+        feedback_text = None
+        if request and request.feedback:
+            feedback_text = request.feedback
+        else:
+            # Fetch from comments
+            comments = await db.sectioncomment.find_many(
+                where={
+                    "sectionId": section_id,
+                    "userId": current_user.id
+                },
+                order={"createdAt": "desc"}
+            )
+            if comments:
+                feedback_text = comments[0].comment
+
+        if not feedback_text:
+            raise HTTPException(status_code=400, detail="No feedback provided. Please add a comment explaining what needs improvement.")
+
+        logger.info(f"Regenerating section {section_id} with feedback: {feedback_text[:50]}...")
+
         # Use specialized feedback regeneration function
         refined_content = ai_service.regenerate_with_feedback(
             section.content or "",
-            request.feedback,
+            feedback_text,
             section.project.type
         )
 
@@ -181,7 +246,7 @@ async def regenerate_with_feedback(
         await db.refinementhistory.create(
             data={
                 "sectionId": section_id,
-                "prompt": f"[FEEDBACK REGENERATION] {request.feedback}",
+                "prompt": f"[FEEDBACK REGENERATION] {feedback_text}",
                 "previousContent": section.content or "",
                 "newContent": refined_content
             }
