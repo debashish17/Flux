@@ -1,12 +1,27 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import TurndownService from 'turndown';
+import SectionFeedback from './SectionFeedback';
 import './DocumentPreview.css';
 
 /**
  * DocumentPreview Component
- * Renders HTML preview of markdown-based documents
- * Replaces the complex LaTeX parser with simple, reliable HTML rendering
+ * Renders HTML preview with inline rich text editing
+ * Auto-saves on click outside or Ctrl+S
  */
-export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '' }) {
+export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', onSectionUpdate, onSectionRefresh }) {
+  const [editingSection, setEditingSection] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const turndownService = new TurndownService();
+  const editorWrapperRef = useRef(null);
+
+  // TipTap rich text editor
+  const editor = useEditor({
+    extensions: [StarterKit],
+    editable: true,
+    content: '',
+  });
   if (!sections || sections.length === 0) {
     return (
       <div className="document-preview-empty">
@@ -34,7 +49,81 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
     return tocEntries;
   };
 
-  // Code view - show raw Markdown
+  // Handle inline editing
+  const startEdit = (sectionId, currentHtmlContent) => {
+    setEditingSection(sectionId);
+
+    // Set the editor content to the current HTML
+    if (editor) {
+      editor.commands.setContent(currentHtmlContent || '');
+      editor.commands.focus();
+    }
+  };
+
+  const saveEdit = async (sectionId) => {
+    if (!onSectionUpdate || !editor) {
+      cancelEdit();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Get HTML from TipTap editor
+      const html = editor.getHTML();
+
+      // Convert HTML to Markdown for backend storage
+      const markdown = turndownService.turndown(html);
+
+      // Save to backend
+      await onSectionUpdate(sectionId, markdown);
+
+      cancelEdit();
+    } catch (error) {
+      console.error('Failed to save edit:', error);
+      setIsSaving(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingSection(null);
+    setIsSaving(false);
+    if (editor) {
+      editor.commands.setContent('');
+    }
+  };
+
+  // Auto-save on click outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (editingSection && editorWrapperRef.current && !editorWrapperRef.current.contains(event.target)) {
+        saveEdit(editingSection);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [editingSection]);
+
+  // Ctrl+S / Cmd+S keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault();
+        if (editingSection) {
+          saveEdit(editingSection);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [editingSection]);
+
+  // Code view - show raw Markdown (READ-ONLY)
   if (viewMode === 'code') {
     return (
       <div className="document-code-view">
@@ -91,32 +180,78 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
           </div>
         )}
 
-        {/* Content Pages */}
-        {sections.map((section, idx) => (
-          <div key={section.id || idx} className="document-page">
-            <div className="page-content">
-              {section.htmlContent ? (
-                <div
-                  className="rendered-content"
-                  dangerouslySetInnerHTML={{ __html: section.htmlContent }}
-                />
-              ) : section.content ? (
-                <div className="rendered-content">
-                  <h2>{section.title}</h2>
-                  <p className="text-gray-500 italic">
-                    (HTML preview not available - showing raw content)
-                  </p>
-                  <pre className="whitespace-pre-wrap">{section.content}</pre>
-                </div>
-              ) : (
-                <div className="rendered-content">
-                  <h2>{section.title}</h2>
-                  <p className="text-gray-400 italic">No content generated yet</p>
-                </div>
-              )}
+        {/* Content Pages - MS Word-style Rich Text Editing */}
+        {sections.map((section, idx) => {
+          const isEditingThis = editingSection === section.id;
+
+          return (
+            <div key={section.id || idx} className="document-page">
+              <div className="page-content">
+                {section.htmlContent ? (
+                  isEditingThis ? (
+                    // Editing mode - Rich Text Editor
+                    <div className="rendered-content editing-mode" ref={editorWrapperRef}>
+                      <div className="bg-white border-2 border-indigo-400 rounded-lg p-4">
+                        {/* TipTap Rich Text Editor */}
+                        <div className="tiptap-editor-wrapper">
+                          <EditorContent
+                            editor={editor}
+                            className="tiptap-editor-content"
+                          />
+                        </div>
+
+                        {/* Save hint */}
+                        <div className="text-xs text-gray-500 mt-3">
+                          {isSaving ? 'Saving...' : 'Press Ctrl+S to save or click outside'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    // Preview mode - Click to edit (MS Word style)
+                    <>
+                      <div
+                        className="rendered-content editable-preview"
+                        onClick={() => onSectionUpdate && startEdit(section.id, section.htmlContent)}
+                        style={{ cursor: onSectionUpdate ? 'text' : 'default' }}
+                        title={onSectionUpdate ? "Click anywhere to edit" : ""}
+                        dangerouslySetInnerHTML={{ __html: section.htmlContent }}
+                      />
+
+                      {/* Feedback Section - key forces re-render when content changes */}
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <SectionFeedback
+                          key={`feedback-${section.id}-${section.htmlContent?.substring(0, 50)}`}
+                          sectionId={section.id}
+                        />
+                      </div>
+                    </>
+                  )
+                ) : section.content ? (
+                  <div className="rendered-content">
+                    <h2>{section.title}</h2>
+                    <p className="text-gray-500 italic">
+                      (HTML preview not available - showing raw content)
+                    </p>
+                    <pre className="whitespace-pre-wrap">{section.content}</pre>
+
+                    {/* Feedback Section - key forces re-render when content changes */}
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                      <SectionFeedback
+                        key={`feedback-${section.id}-${section.content?.substring(0, 50)}`}
+                        sectionId={section.id}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rendered-content">
+                    <h2>{section.title}</h2>
+                    <p className="text-gray-400 italic">No content generated yet</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

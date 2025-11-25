@@ -226,6 +226,101 @@ def refine_section_content(current_content: str, instruction: str, project_type:
         return APIError.generation_error(error_msg)
 
 
+def regenerate_with_feedback(current_content: str, user_feedback: str, project_type: str) -> str:
+    """
+    Regenerate content based on user feedback while preserving structure
+
+    Args:
+        current_content: The existing content to regenerate
+        user_feedback: User's feedback on what needs improvement
+        project_type: Either 'pptx' or 'docx'
+
+    Returns:
+        Regenerated content string with structure preserved
+    """
+    if not API_KEY:
+        return APIError.no_api_key()
+
+    model = _get_model()
+
+    if project_type == "pptx":
+        prompt = _build_presentation_feedback_prompt(current_content, user_feedback)
+    else:  # docx
+        prompt = _build_document_feedback_prompt(current_content, user_feedback)
+
+    try:
+        return _generate_content_sync(model, prompt)
+    except Exception as e:
+        error_msg = str(e)
+        if APIError.is_rate_limit(error_msg):
+            return APIError.rate_limit()
+        return APIError.generation_error(error_msg)
+
+
+def _build_presentation_feedback_prompt(current_content: str, user_feedback: str) -> str:
+    """Build prompt for regenerating presentation content based on feedback"""
+    return f"""You are a presentation expert. The user has reviewed a slide and provided feedback.
+
+CURRENT SLIDE:
+{current_content}
+
+USER FEEDBACK: {user_feedback}
+
+CRITICAL REQUIREMENTS:
+1. PRESERVE THE EXACT FORMAT:
+   - Must start with "TITLE: [text]"
+   - Must have "CONTENT:" section
+   - Must use bullet points (•)
+   - Must end with "IMAGE_SUGGESTION: [text]"
+
+2. KEEP THE STRUCTURE:
+   - Same number of bullet points (or ±1)
+   - Same overall layout
+   - Same information hierarchy
+
+3. APPLY THE FEEDBACK:
+   - Address the user's specific concern
+   - Improve the content quality based on their input
+   - Maintain professional presentation standards
+
+OUTPUT THE IMPROVED SLIDE IN THE EXACT SAME FORMAT."""
+
+
+def _build_document_feedback_prompt(current_content: str, user_feedback: str) -> str:
+    """Build prompt for regenerating document content based on feedback"""
+    return f"""You are a document editor. The user reviewed a section and provided feedback.
+
+CURRENT SECTION:
+{current_content}
+
+USER FEEDBACK: {user_feedback}
+
+CRITICAL REQUIREMENTS:
+1. PRESERVE THE EXACT STRUCTURE:
+   - Keep ALL markdown headers (##, ###, ####, etc.) in the same positions
+   - Maintain ALL subsection hierarchies
+   - Preserve ALL tables with same columns and rows
+   - Keep ALL lists (bulleted and numbered) in same locations
+   - Maintain ALL formatting (bold, italic, code blocks, etc.)
+
+2. KEEP THE ORGANIZATION:
+   - Same number of sections and subsections
+   - Same logical flow and progression
+   - Same level of detail and depth
+
+3. APPLY THE FEEDBACK:
+   - Address the user's specific concern about the CONTENT
+   - Improve the writing based on their input
+   - Enhance clarity, accuracy, or style as requested
+
+4. OUTPUT IN MARKDOWN:
+   - Use proper markdown syntax
+   - Maintain professional documentation standards
+   - Return the COMPLETE section with structure intact
+
+DO NOT change the structure, only improve the content within that structure."""
+
+
 def _build_presentation_refinement_prompt(current_content: str, instruction: str) -> str:
     """Build prompt for refining presentation content"""
     return f"""You are a presentation design expert tasked with improving slide content.

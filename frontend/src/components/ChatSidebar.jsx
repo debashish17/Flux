@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, X, MessageSquare, Loader2 } from 'lucide-react';
+import { Send, X, MessageSquare, Loader2, Copy, Check } from 'lucide-react';
 import api from '../api';
 
 export default function ChatSidebar({ projectId, isOpen, onClose }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [loadingHistory, setLoadingHistory] = useState(false);
+    const [copiedIndex, setCopiedIndex] = useState(null);
     const messagesEndRef = useRef(null);
 
     const scrollToBottom = () => {
@@ -16,15 +18,42 @@ export default function ChatSidebar({ projectId, isOpen, onClose }) {
         scrollToBottom();
     }, [messages]);
 
+    // Load chat history when sidebar opens
     useEffect(() => {
-        if (isOpen && messages.length === 0) {
-            // Add welcome message
+        if (isOpen && projectId) {
+            loadChatHistory();
+        }
+    }, [isOpen, projectId]);
+
+    const loadChatHistory = async () => {
+        setLoadingHistory(true);
+        try {
+            const response = await api.get(`/chat/projects/${projectId}/history`);
+            const historyMessages = response.data.map(msg => ({
+                role: msg.role,
+                content: msg.message
+            }));
+
+            if (historyMessages.length === 0) {
+                // Add welcome message if no history
+                setMessages([{
+                    role: 'assistant',
+                    content: 'Hello! I\'m here to help you with your project. Ask me anything about content ideas, improvements, or general questions!'
+                }]);
+            } else {
+                setMessages(historyMessages);
+            }
+        } catch (error) {
+            console.error('Failed to load chat history:', error);
+            // Add welcome message on error
             setMessages([{
                 role: 'assistant',
                 content: 'Hello! I\'m here to help you with your project. Ask me anything about content ideas, improvements, or general questions!'
             }]);
+        } finally {
+            setLoadingHistory(false);
         }
-    }, [isOpen]);
+    };
 
     const handleSend = async (e) => {
         e.preventDefault();
@@ -57,6 +86,16 @@ export default function ChatSidebar({ projectId, isOpen, onClose }) {
         }
     };
 
+    const handleCopy = async (text, index) => {
+        try {
+            await navigator.clipboard.writeText(text);
+            setCopiedIndex(index);
+            setTimeout(() => setCopiedIndex(null), 2000);
+        } catch (error) {
+            console.error('Failed to copy:', error);
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -78,29 +117,58 @@ export default function ChatSidebar({ projectId, isOpen, onClose }) {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                {messages.map((message, index) => (
-                    <div
-                        key={index}
-                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                        <div
-                            className={`max-w-[80%] rounded-xl px-4 py-2 border text-sm shadow-sm ${message.role === 'user'
-                                    ? 'bg-indigo-100 border-indigo-200 text-indigo-900'
-                                    : 'bg-green-50 border-green-200 text-green-900'
-                                }`}
-                        >
-                            <p className="whitespace-pre-wrap font-medium">{message.content}</p>
-                        </div>
+                {loadingHistory ? (
+                    <div className="flex items-center justify-center h-full">
+                        <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
                     </div>
-                ))}
-                {loading && (
-                    <div className="flex justify-start">
-                        <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 shadow-sm">
-                            <Loader2 className="w-5 h-5 animate-spin text-green-400" />
-                        </div>
-                    </div>
+                ) : (
+                    <>
+                        {messages.map((message, index) => (
+                            <div
+                                key={index}
+                                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                            >
+                                <div className="flex flex-col gap-1 max-w-[80%]">
+                                    <div
+                                        className={`rounded-xl px-4 py-2 border text-sm shadow-sm ${message.role === 'user'
+                                                ? 'bg-indigo-100 border-indigo-200 text-indigo-900'
+                                                : 'bg-green-50 border-green-200 text-green-900'
+                                            }`}
+                                    >
+                                        <p className="whitespace-pre-wrap font-medium">{message.content}</p>
+                                    </div>
+                                    {message.role === 'assistant' && (
+                                        <button
+                                            onClick={() => handleCopy(message.content, index)}
+                                            className="self-start flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                                            title="Copy response"
+                                        >
+                                            {copiedIndex === index ? (
+                                                <>
+                                                    <Check className="w-3 h-3" />
+                                                    <span>Copied!</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Copy className="w-3 h-3" />
+                                                    <span>Copy</span>
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        {loading && (
+                            <div className="flex justify-start">
+                                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2 shadow-sm">
+                                    <Loader2 className="w-5 h-5 animate-spin text-green-400" />
+                                </div>
+                            </div>
+                        )}
+                        <div ref={messagesEndRef} />
+                    </>
                 )}
-                <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
