@@ -25,5 +25,24 @@ frontend/dist/
 backend/__pycache__/
 backend/*.pyc
 backend/.env
-# Claude
 .claude/
+# Project documentation
+claude.md
+IMPLEMENTATION_PROGRESS.md
+
+# Test files and caches
+**/tests/
+**/test_*.py
+**/*_test.py
+**/*.spec.*
+**/*.test.*
+.pytest_cache/
+coverage/
+.coverage
+
+# Temporary and backup Markdown files
+*.md~
+*.md.bak
+*.draft.md
+docs/**/*.md~
+docs/**/*.md.bak

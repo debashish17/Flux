@@ -88,6 +88,11 @@ export default function ProjectSetup() {
                 prompt: userPrompt
             });
 
+            // Invalidate dashboard cache to ensure fresh data on return
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
+            sessionStorage.setItem('refresh_dashboard', 'true');
+
             // Navigate to the editor
             navigate(`/editor/${response.data.id}`);
         } catch (error) {

@@ -132,4 +132,20 @@ api.interceptors.request.use(
     }
 );
 
+// Response interceptor to handle authentication errors
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        // If we get a 401 Unauthorized, clear token and cached data, then redirect to login
+        if (error.response && error.response.status === 401) {
+            localStorage.removeItem('token');
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
+            sessionStorage.removeItem('refresh_dashboard');
+            window.location.href = '/login';
+        }
+        return Promise.reject(error);
+    }
+);
+
 export default api;

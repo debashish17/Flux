@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
-import { Download, Send, RefreshCw, Loader2, Sparkles, ArrowLeft, MessageSquare, FileText, Code } from 'lucide-react';
+import { Download, RefreshCw, Loader2, Sparkles, ArrowLeft, MessageSquare, Code, FileText, Send } from 'lucide-react';
 import ChatSidebar from '../components/ChatSidebar';
-import LatexPreview from '../components/LatexPreview';
+import DocumentPreview from '../components/DocumentPreview';
+import SectionFeedback from '../components/SectionFeedback';
+import { errorToast, successToast } from '../utils/toast';
+
 
 export default function DocumentEditor() {
     const { id } = useParams();
@@ -16,6 +19,8 @@ export default function DocumentEditor() {
     const [autoGenNotice, setAutoGenNotice] = useState("");
     const [chatOpen, setChatOpen] = useState(false);
     const [viewMode, setViewMode] = useState('preview'); // 'preview' or 'code'
+    const [refreshKey, setRefreshKey] = useState(0); // Force refresh of feedback components
+    const [feedbackCache, setFeedbackCache] = useState({}); // Cache feedback for all sections
 
     useEffect(() => {
         loadProject();
@@ -28,11 +33,19 @@ export default function DocumentEditor() {
             console.log('First section content:', res.data.sections[0]?.content?.substring(0, 200));
             setProject(res.data);
 
+            // Load feedback in batch (single API call instead of N calls)
+            try {
+                const feedbackRes = await api.get(`/feedback/projects/${id}/batch`);
+                setFeedbackCache(feedbackRes.data);
+            } catch (error) {
+                console.error('Failed to load feedback batch:', error);
+            }
+
             // Auto-generate full document for DOCX if empty
             if (res.data.type === 'docx' && res.data.sections.length > 0) {
                 const firstSection = res.data.sections[0];
                 if (!firstSection.content || firstSection.content.trim() === '') {
-                    generateFullDocument();
+                    generateFullDocument(res.data);
                 }
             }
         } catch (error) {
@@ -40,24 +53,111 @@ export default function DocumentEditor() {
         }
     };
 
-    const generateFullDocument = async () => {
-        setAutoGenerating(true);
-        setAutoGenNotice("AI is generating the full document...");
+    const generateFullDocument = async (projectData = null) => {
+        // Use provided projectData or fall back to state
+        const currentProject = projectData || project;
+
+        // Safety check
+        if (!currentProject || !currentProject.sections) {
+            console.error('No project data available');
+            return;
+        }
 
         try {
-            await api.post(`/projects/${id}/generate-full-document`);
-            // Add a short delay to ensure backend has committed changes
+            setAutoGenerating(true);
+
+            // Check if this is initial generation (empty content) or regeneration (disliked sections)
+            const firstSection = currentProject.sections[0];
+            const isInitialGeneration = !firstSection.content || firstSection.content.trim() === '';
+
+            if (isInitialGeneration) {
+                // Initial generation - use the full document generation endpoint
+                setAutoGenNotice("AI is generating your document...");
+                try {
+                    await api.post(`/projects/${currentProject.id}/generate-full-document`);
+
+                    // Invalidate dashboard cache so updated timestamp is visible
+                    sessionStorage.removeItem('dashboard_projects');
+                    sessionStorage.removeItem('dashboard_cache_timestamp');
+
+                    // Reload project
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    const projectRes = await api.get(`/projects/${id}`);
+                    setProject(projectRes.data);
+                    setRefreshKey(prev => prev + 1);
+
+                    setAutoGenNotice("Document generated successfully!");
+                    setTimeout(() => setAutoGenNotice(""), 3000);
+                } catch (error) {
+                    console.error('Failed to generate document', error);
+                    setAutoGenNotice("Failed to generate document. Please try again.");
+                    setTimeout(() => setAutoGenNotice(""), 5000);
+                }
+                setAutoGenerating(false);
+                return;
+            }
+
+            // Regeneration mode - check for disliked sections with feedback
+            const dislikedSections = [];
+            for (const section of currentProject.sections) {
+                try {
+                    const feedbackRes = await api.get(`/feedback/sections/${section.id}`);
+                    if (feedbackRes.data.userFeedback === 'dislike') {
+                        // Get the feedback comment
+                        const commentsRes = await api.get(`/feedback/sections/${section.id}/comments`);
+                        if (commentsRes.data.length > 0) {
+                            dislikedSections.push({
+                                id: section.id,
+                                title: section.title,
+                                feedback: commentsRes.data[0].comment
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.log(`No feedback for section ${section.id}`);
+                }
+            }
+
+            if (dislikedSections.length === 0) {
+                setAutoGenNotice("No sections marked for regeneration. Please dislike and add feedback to sections you want to improve.");
+                setTimeout(() => setAutoGenNotice(""), 4000);
+                setAutoGenerating(false);
+                return;
+            }
+
+            setAutoGenNotice(`Regenerating ${dislikedSections.length} section${dislikedSections.length > 1 ? 's' : ''} based on your feedback...`);
+
+            // Regenerate each disliked section
+            for (const section of dislikedSections) {
+                try {
+                    await api.post(`/feedback/sections/${section.id}/regenerate`, {
+                        feedback: section.feedback
+                    });
+                } catch (error) {
+                    console.error(`Failed to regenerate section ${section.id}`, error);
+                }
+            }
+
+            // Reload the project
             await new Promise(resolve => setTimeout(resolve, 500));
             const projectRes = await api.get(`/projects/${id}`);
-            console.log('Generated project:', projectRes.data);
-            console.log('Generated content preview:', projectRes.data.sections[0]?.content?.substring(0, 200));
-            console.log('Has \\documentclass?', projectRes.data.sections[0]?.content?.includes('\\documentclass'));
             setProject(projectRes.data);
-            setAutoGenNotice("Document generated successfully!");
+
+            // Update feedback cache - reset disliked sections to null
+            const updatedCache = { ...feedbackCache };
+            dislikedSections.forEach(section => {
+                updatedCache[section.id] = { userFeedback: null };
+            });
+            setFeedbackCache(updatedCache);
+
+            // Force refresh of all feedback components
+            setRefreshKey(prev => prev + 1);
+
+            setAutoGenNotice(`Successfully regenerated ${dislikedSections.length} section${dislikedSections.length > 1 ? 's' : ''}!`);
             setTimeout(() => setAutoGenNotice(""), 3000);
         } catch (error) {
-            console.error('Failed to generate full document', error);
-            setAutoGenNotice("Failed to generate document. Please try again.");
+            console.error('Failed to regenerate sections', error);
+            setAutoGenNotice("Failed to regenerate. Please try again.");
             setTimeout(() => setAutoGenNotice(""), 5000);
         } finally {
             setAutoGenerating(false);
@@ -72,6 +172,10 @@ export default function DocumentEditor() {
                 s.id === sectionId ? { ...s, content: res.data.content } : s
             );
             setProject({ ...project, sections: updatedSections });
+
+            // Invalidate dashboard cache
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
         } catch (error) {
             console.error('Generation failed', error);
         } finally {
@@ -94,6 +198,10 @@ export default function DocumentEditor() {
             );
             setProject({ ...project, sections: updatedSections });
             setRefinementPrompts({ ...refinementPrompts, [sectionId]: '' });
+
+            // Invalidate dashboard cache
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
         } catch (error) {
             console.error('Refinement failed', error);
         } finally {
@@ -111,12 +219,85 @@ export default function DocumentEditor() {
             link.setAttribute('download', `${project.title}.${project.type}`);
             document.body.appendChild(link);
             link.click();
+            successToast('Document exported successfully!');
         } catch (error) {
             console.error('Export failed', error);
+            const errorMessage = error.response?.data?.detail || error.message || 'Failed to export document';
+            errorToast(`Export failed: ${errorMessage}`);
         } finally {
             setIsExporting(false);
         }
     };
+
+
+    const handleAddSection = async (afterSectionId) => {
+        try {
+            const newSection = await api.post('/sections/', {
+                projectId: parseInt(id),
+                title: 'New Section',
+                content: '',
+                insertAfter: afterSectionId
+            });
+
+            await loadProject();
+            setAutoGenNotice("Section added successfully!");
+            setTimeout(() => setAutoGenNotice(""), 2000);
+        } catch (error) {
+            console.error('Failed to add section', error);
+            setAutoGenNotice("Failed to add section.");
+            setTimeout(() => setAutoGenNotice(""), 3000);
+        }
+    };
+
+    const handleDeleteSection = async (sectionId) => {
+        if (!confirm('Are you sure you want to delete this section?')) return;
+
+        try {
+            await api.delete(`/sections/${sectionId}`);
+            await loadProject();
+            setAutoGenNotice("Section deleted successfully!");
+            setTimeout(() => setAutoGenNotice(""), 2000);
+        } catch (error) {
+            console.error('Failed to delete section', error);
+            setAutoGenNotice("Failed to delete section.");
+            setTimeout(() => setAutoGenNotice(""), 3000);
+        }
+    };
+
+    const handleMoveSection = async (sectionId, currentIndex, direction) => {
+        const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+        try {
+            await api.patch(`/sections/${sectionId}/reorder`, {
+                newOrderIndex: newIndex
+            });
+            await loadProject();
+        } catch (error) {
+            console.error('Failed to reorder section', error);
+            setAutoGenNotice("Failed to reorder section.");
+            setTimeout(() => setAutoGenNotice(""), 3000);
+        }
+    };
+
+    // Handler for inline editing in DocumentPreview
+    const handlePreviewSectionUpdate = async (sectionId, newContent) => {
+        try {
+            // Update content via API
+            await api.patch(`/sections/${sectionId}`, { content: newContent });
+
+            // Reload project to get updated htmlContent from backend
+            await loadProject();
+
+            setAutoGenNotice("Content saved successfully!");
+            setTimeout(() => setAutoGenNotice(""), 2000);
+        } catch (error) {
+            console.error('Failed to save content', error);
+            setAutoGenNotice("Failed to save content.");
+            setTimeout(() => setAutoGenNotice(""), 3000);
+            throw error; // Re-throw so DocumentPreview can handle it
+        }
+    };
+
 
     if (!project) return (
         <div className="flex items-center justify-center h-screen">
@@ -124,17 +305,9 @@ export default function DocumentEditor() {
         </div>
     );
 
-    const isLatexDocument = project.type === 'docx' &&
-                           project.sections.length > 0 &&
-                           project.sections[0].content &&
-                           (project.sections[0].content.includes('\\documentclass') ||
-                            project.sections[0].content.includes('\\begin{document}'));
-
-    console.log('isLatexDocument:', isLatexDocument);
-    console.log('Project type:', project.type);
-    console.log('Sections count:', project.sections.length);
-    console.log('Has content:', !!project.sections[0]?.content);
-    console.log('Content length:', project.sections[0]?.content?.length);
+    // Check if document has content
+    const hasContent = project.sections.length > 0 &&
+                      project.sections.some(s => s.content && s.content.trim() !== '');
 
     return (
         <>
@@ -144,39 +317,38 @@ export default function DocumentEditor() {
                     <span className="font-medium">{autoGenNotice}</span>
                 </div>
             )}
-            
+
             <div className="flex h-screen bg-gray-100 overflow-hidden">
                 {/* Main Content */}
                 <div className="flex-1 flex flex-col min-w-0">
-                    {/* Header - Improved Structure */}
+                    {/* Header */}
                     <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
                         <div className="mx-auto px-6 py-3">
                             <div className="flex items-center justify-between gap-6">
-                                {/* Left Section: Back Button + Project Info */}
+                                {/* Left Section */}
                                 <div className="flex items-center gap-3 min-w-0 flex-1">
                                     <button
                                         onClick={() => navigate('/')}
                                         className="flex-shrink-0 p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-all"
                                         title="Back to Dashboard"
-                                        aria-label="Back to Dashboard"
                                     >
                                         <ArrowLeft className="w-5 h-5" />
                                     </button>
-                                    
+
                                     <div className="min-w-0 flex-1">
                                         <h1 className="font-semibold text-lg text-gray-900 truncate">
-                                            {project.title}
+                                            {project?.title}
                                         </h1>
                                         <p className="text-xs text-gray-500 font-medium tracking-wide">
-                                            {project.type === 'docx' ? 'Word Document' : 'PowerPoint Presentation'}
+                                            {project?.type === 'docx' ? 'Word Document' : 'PowerPoint Presentation'}
                                         </p>
                                     </div>
                                 </div>
 
-                                {/* Right Section: Actions */}
+                                {/* Right Section */}
                                 <div className="flex items-center gap-3 flex-shrink-0">
-                                    {/* View Mode Toggle for LaTeX documents */}
-                                    {isLatexDocument && (
+                                    {/* View Mode Toggle - Preview/Markdown */}
+                                    {project?.type === 'docx' && hasContent && (
                                         <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
                                             <button
                                                 onClick={() => setViewMode('preview')}
@@ -185,7 +357,6 @@ export default function DocumentEditor() {
                                                         ? 'bg-white text-gray-900 shadow-sm'
                                                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                                 }`}
-                                                aria-label="Preview mode"
                                             >
                                                 <FileText className="w-4 h-4" />
                                                 <span className="hidden sm:inline">Preview</span>
@@ -197,23 +368,21 @@ export default function DocumentEditor() {
                                                         ? 'bg-white text-gray-900 shadow-sm'
                                                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                                                 }`}
-                                                aria-label="LaTeX code mode"
                                             >
                                                 <Code className="w-4 h-4" />
-                                                <span className="hidden sm:inline">LaTeX</span>
+                                                <span className="hidden sm:inline">Markdown</span>
                                             </button>
                                         </div>
                                     )}
 
-                                    {/* Regenerate Button for LaTeX documents */}
-                                    {isLatexDocument && (
+                                    {/* Regenerate Button */}
+                                    {project?.type === 'docx' && hasContent && (
                                         <>
                                             <div className="hidden lg:block w-px h-8 bg-gray-200" />
                                             <button
-                                                onClick={generateFullDocument}
+                                                onClick={() => generateFullDocument()}
                                                 disabled={autoGenerating}
-                                                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                                aria-label="Regenerate document"
+                                                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hover:border-gray-400 transition-all disabled:opacity-50"
                                             >
                                                 {autoGenerating ? (
                                                     <>
@@ -230,7 +399,6 @@ export default function DocumentEditor() {
                                         </>
                                     )}
 
-                                    {/* Divider */}
                                     <div className="hidden lg:block w-px h-8 bg-gray-200" />
 
                                     {/* Chat Button */}
@@ -241,7 +409,6 @@ export default function DocumentEditor() {
                                                 ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
                                                 : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400'
                                         }`}
-                                        aria-label="Toggle chat"
                                     >
                                         <MessageSquare className="w-4 h-4" />
                                         <span className="hidden sm:inline">Chat</span>
@@ -251,8 +418,7 @@ export default function DocumentEditor() {
                                     <button
                                         onClick={handleExport}
                                         disabled={isExporting}
-                                        className="flex items-center gap-2 px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-green-600 hover:bg-green-700 active:bg-green-800 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        aria-label="Export document"
+                                        className="flex items-center gap-2 px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-green-600 hover:bg-green-700 shadow-sm transition-all disabled:opacity-50"
                                     >
                                         {isExporting ? (
                                             <>
@@ -273,12 +439,25 @@ export default function DocumentEditor() {
 
                     {/* Document Content */}
                     <div className="flex-1 overflow-y-auto">
-                        {/* For DOCX: Only show full document (LaTeX) */}
-                        {project.type === 'docx' ? (
-                            isLatexDocument ? (
-                                <LatexPreview
-                                    latexContent={project.sections[0].content}
+                        {/* For DOCX: Show preview with inline editing */}
+                        {project?.type === 'docx' ? (
+                            hasContent ? (
+                                <DocumentPreview
+                                    key={refreshKey}
+                                    sections={project.sections}
                                     viewMode={viewMode}
+                                    projectTitle={project.title}
+                                    feedbackCache={feedbackCache}
+                                    onSectionUpdate={handlePreviewSectionUpdate}
+                                    onSectionRefresh={(updatedSection) => {
+                                        // Update the section in the project state
+                                        setProject(prev => ({
+                                            ...prev,
+                                            sections: prev.sections.map(s =>
+                                                s.id === updatedSection.id ? updatedSection : s
+                                            )
+                                        }));
+                                    }}
                                 />
                             ) : (
                                 <div className="flex flex-col items-center justify-center py-12">
@@ -287,18 +466,16 @@ export default function DocumentEditor() {
                                 </div>
                             )
                         ) : (
+                            // ...existing code for pptx...
                             <div className="max-w-4xl mx-auto py-8 px-4">
                                 <div className="bg-white rounded-lg shadow-lg p-12">
-                                    {/* Document Title */}
                                     <div className="text-center pb-6 border-b-2 border-gray-200 mb-8">
                                         <h1 className="text-4xl font-bold text-gray-900">{project.title}</h1>
                                     </div>
 
-                                    {/* For PPTX: Show section-by-section */}
                                     <div className="space-y-12">
                                         {project.sections.map((section, index) => (
                                             <div key={section.id} className="space-y-4">
-                                                {/* Section Header */}
                                                 <div className="flex justify-between items-center">
                                                     <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                                                         Slide {index + 1}: {section.title}
@@ -316,7 +493,6 @@ export default function DocumentEditor() {
                                                     </button>
                                                 </div>
 
-                                                {/* Section Content */}
                                                 <div className="prose max-w-none">
                                                     {loadingSection === section.id && !section.content ? (
                                                         <div className="flex flex-col items-center justify-center py-12">
@@ -343,39 +519,55 @@ export default function DocumentEditor() {
                                                     )}
                                                 </div>
 
-                                                {/* Refinement Input */}
                                                 {section.content && (
-                                                    <div className="pt-4">
-                                                        <form
-                                                            onSubmit={(e) => {
-                                                                e.preventDefault();
-                                                                handleRefine(section.id);
-                                                            }}
-                                                            className="flex gap-2"
-                                                        >
-                                                            <input
-                                                                type="text"
-                                                                value={refinementPrompts[section.id] || ''}
-                                                                onChange={(e) => setRefinementPrompts({
-                                                                    ...refinementPrompts,
-                                                                    [section.id]: e.target.value
-                                                                })}
-                                                                placeholder="Refine this section (e.g., 'Make it more formal', 'Add examples')..."
-                                                                className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border text-sm"
-                                                                disabled={loadingSection === section.id}
-                                                            />
-                                                            <button
-                                                                type="submit"
-                                                                disabled={loadingSection === section.id || !refinementPrompts[section.id]}
-                                                                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                                                    <>
+                                                        <div className="pt-4">
+                                                            <form
+                                                                onSubmit={(e) => {
+                                                                    e.preventDefault();
+                                                                    handleRefine(section.id);
+                                                                }}
+                                                                className="flex gap-2"
                                                             >
-                                                                <Send className="w-4 h-4" />
-                                                            </button>
-                                                        </form>
-                                                    </div>
+                                                                <input
+                                                                    type="text"
+                                                                    value={refinementPrompts[section.id] || ''}
+                                                                    onChange={(e) => setRefinementPrompts({
+                                                                        ...refinementPrompts,
+                                                                        [section.id]: e.target.value
+                                                                    })}
+                                                                    placeholder="Refine this section (e.g., 'Make it more formal', 'Add examples')..."
+                                                                    className="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border text-sm"
+                                                                    disabled={loadingSection === section.id}
+                                                                />
+                                                                <button
+                                                                    type="submit"
+                                                                    disabled={loadingSection === section.id || !refinementPrompts[section.id]}
+                                                                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                                                                >
+                                                                    <Send className="w-4 h-4" />
+                                                                </button>
+                                                            </form>
+                                                        </div>
+
+                                                        {/* Feedback Section */}
+                                                        <div className="pt-4 mt-4 border-t border-gray-200">
+                                                            <SectionFeedback
+                                                                sectionId={section.id}
+                                                                onRegenerateSuccess={(updatedSection) => {
+                                                                    // Update the section in the project state
+                                                                    setProject(prev => ({
+                                                                        ...prev,
+                                                                        sections: prev.sections.map(s =>
+                                                                            s.id === updatedSection.id ? updatedSection : s
+                                                                        )
+                                                                    }));
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </>
                                                 )}
 
-                                                {/* Section Divider */}
                                                 {index < project.sections.length - 1 && (
                                                     <div className="pt-8">
                                                         <hr className="border-gray-200" />
@@ -393,6 +585,7 @@ export default function DocumentEditor() {
                 {/* Chat Sidebar */}
                 <ChatSidebar projectId={parseInt(id)} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
             </div>
+
         </>
     );
 }

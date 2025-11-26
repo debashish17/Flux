@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List, Optional
 from pydantic import BaseModel
 from prisma import Prisma
+from datetime import datetime
 import database, auth, ai_service
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -21,6 +22,7 @@ class SectionResponse(BaseModel):
     id: int
     title: str
     content: Optional[str]
+    htmlContent: Optional[str]
     orderIndex: int
 
     class Config:
@@ -30,6 +32,8 @@ class ProjectResponse(BaseModel):
     id: int
     title: str
     type: str
+    createdAt: datetime
+    updatedAt: datetime
     sections: List[SectionResponse] = []
 
     class Config:
@@ -102,8 +106,10 @@ async def generate_full_document(
     db: Prisma = Depends(database.get_db),
     current_user = Depends(auth.get_current_user)
 ):
-    """Generate entire document at once in LaTeX format for DOCX projects"""
+    """Generate entire document at once in Markdown format for DOCX projects"""
     import logging
+    import markdown_utils
+
     logger = logging.getLogger("uvicorn.error")
 
     logger.info(f"\n{'='*80}\nGENERATE FULL DOCUMENT ENDPOINT CALLED")
@@ -136,50 +142,72 @@ async def generate_full_document(
     section_titles = [s.title for s in sections]
     logger.info(f"Retrieved {len(sections)} sections: {section_titles}")
 
-    # Generate full LaTeX document
-    logger.info("Calling AI service to generate LaTeX...")
-    latex_content = await ai_service.generate_full_latex_document(
-        user_prompt=project.prompt or f"Create a comprehensive document about {project.title}",
+    # Generate full Markdown document
+    logger.info("Calling AI service to generate Markdown...")
+    markdown_content = await ai_service.generate_full_markdown_document(
         title=project.title,
-        sections=section_titles
+        sections=section_titles,
+        user_prompt=project.prompt or f"Create a comprehensive document about {project.title}"
     )
 
-    logger.info(f"LaTeX generation complete. Content length: {len(latex_content)}")
+    logger.info(f"Markdown generation complete. Content length: {len(markdown_content)}")
 
-    # Store the LaTeX content as a single piece in the first section
-    # This is a special case for whole-document generation
-    if sections:
-        logger.info(f"Storing LaTeX in section {sections[0].id}")
-        with open("backend_debug.log", "a") as f:
-            f.write(f"Storing LaTeX in section {sections[0].id}\n")
-            
+    # Split markdown into sections
+    logger.info("Splitting markdown into sections...")
+    sections_content = markdown_utils.split_markdown_by_sections(markdown_content, section_titles)
+
+    # Update each section with its content and HTML
+    for section in sections:
+        section_markdown = sections_content.get(section.title, f"## {section.title}\n\nContent not generated.")
+        section_html = markdown_utils.markdown_to_html(section_markdown)
+
+        logger.info(f"Updating section {section.id} ({section.title}): {len(section_markdown)} chars markdown, {len(section_html)} chars HTML")
+
         await db.documentsection.update(
-            where={"id": sections[0].id},
-            data={"content": latex_content}
+            where={"id": section.id},
+            data={
+                "content": section_markdown,
+                "htmlContent": section_html
+            }
         )
-        # Mark other sections as part of full document
-        for section in sections[1:]:
-            await db.documentsection.update(
-                where={"id": section.id},
-                data={"content": "[Part of full document - see first section]"}
-            )
-        logger.info("LaTeX content stored successfully")
-        with open("backend_debug.log", "a") as f:
-            f.write("LaTeX content stored successfully\n")
 
+    # Update project's updatedAt timestamp
+    await db.project.update(
+        where={"id": project_id},
+        data={"updatedAt": datetime.now()}
+    )
+
+    logger.info(f"All {len(sections)} sections updated successfully")
+    logger.info(f"Project updatedAt timestamp refreshed")
     logger.info(f"={'='*80}\n")
-    return {"latex_content": latex_content, "message": "Full document generated successfully"}
+
+    return {
+        "message": "Full document generated successfully",
+        "sections_count": len(sections),
+        "total_length": len(markdown_content)
+    }
 
 @router.get("/", response_model=List[ProjectResponse])
-async def get_projects(db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
+async def get_projects(
+    skip: int = 0,
+    limit: int = 20,
+    db: Prisma = Depends(database.get_db),
+    current_user = Depends(auth.get_current_user)
+):
+    """Get user projects with pagination. Default: 20 projects per page."""
     projects = await db.project.find_many(
         where={"userId": current_user.id},
-        include={
-            "sections": {
-                "order_by": {"orderIndex": "asc"}
-            }
-        }
+        include={"sections": True},
+        skip=skip,
+        take=limit,
+        order={"updatedAt": "desc"}
     )
+
+    # Sort sections by orderIndex in Python (Prisma Python doesn't support nested ordering)
+    for project in projects:
+        if project.sections:
+            project.sections.sort(key=lambda s: s.orderIndex)
+
     return projects
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -189,23 +217,24 @@ async def get_project(project_id: int, db: Prisma = Depends(database.get_db), cu
             "id": project_id,
             "userId": current_user.id
         },
-        include={
-            "sections": {
-                "order_by": {"orderIndex": "asc"}
-            }
-        }
+        include={"sections": True}
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Sort sections by orderIndex in Python
+    if project.sections:
+        project.sections.sort(key=lambda s: s.orderIndex)
+
     return project
 
 @router.delete("/{project_id}")
 async def delete_project(project_id: int, db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
     import logging
     logger = logging.getLogger("uvicorn.error")
-    
+
     logger.info(f"Delete request for project {project_id} by user {current_user.id}")
-    
+
     project = await db.project.find_first(
         where={
             "id": project_id,

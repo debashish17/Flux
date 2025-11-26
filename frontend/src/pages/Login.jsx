@@ -25,6 +25,10 @@ export default function Login() {
 
             if (response.data && response.data.access_token) {
                 localStorage.setItem('token', response.data.access_token);
+                // Clear any cached data from previous user
+                sessionStorage.removeItem('dashboard_projects');
+                sessionStorage.removeItem('dashboard_cache_timestamp');
+                sessionStorage.removeItem('refresh_dashboard');
                 navigate('/');
             } else {
                 console.error('Invalid response structure:', response);
@@ -32,7 +36,29 @@ export default function Login() {
             }
         } catch (error) {
             console.error('Login Error:', error);
-            alert('Authentication failed');
+
+            // Parse error response for specific error messages
+            let errorMessage = 'Authentication failed';
+
+            if (error.response) {
+                // Server responded with error
+                if (error.response.status === 401) {
+                    errorMessage = isLogin
+                        ? 'Invalid email or password'
+                        : 'Email already registered';
+                } else if (error.response.status === 422) {
+                    errorMessage = 'Please check your email and password format';
+                } else if (error.response.data?.detail) {
+                    errorMessage = error.response.data.detail;
+                } else if (error.response.status === 500) {
+                    errorMessage = 'Server error. Please try again later';
+                }
+            } else if (error.request) {
+                // Network error
+                errorMessage = 'Network error. Check your connection';
+            }
+
+            alert(errorMessage);
         }
     };
 

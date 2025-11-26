@@ -164,35 +164,45 @@ REMEMBER: Great slides support speech, they don't replace it. Keep it minimal an
 
 def _build_document_section_prompt(project_title: str, section_title: str) -> str:
     """Build optimized prompt for document section content"""
-    return f"""You are a professional business writer creating clear, authoritative document content.
+    return f"""You are a subject matter expert writing content for a professional document.
 
-DOCUMENT TITLE: {project_title}
-SECTION: {section_title}
+DOCUMENT: {project_title}
+CURRENT SECTION: {section_title}
 
-Write comprehensive, professional content for this section.
+CONTEXT ANALYSIS:
+- This section is part of a document about: {project_title}
+- The section specifically covers: {section_title}
+- Write content that directly addresses THIS specific topic within the document's broader context
+- Use terminology, examples, and concepts relevant to this subject matter
+
+Write comprehensive, expert-level content for this section.
 
 STRUCTURE REQUIREMENTS:
 • Write 2-4 well-developed paragraphs (200-400 words total)
 • Each paragraph should have:
   - A clear topic sentence that previews the main idea
-  - 3-5 supporting sentences with specific details
+  - 3-5 supporting sentences with specific, relevant details
   - A concluding sentence that connects to the next paragraph or summarizes
 
 CONTENT REQUIREMENTS:
-• Include concrete examples, data points, or real-world applications
-• Use professional yet accessible language (avoid unnecessary jargon)
-• Maintain an authoritative, confident tone
-• Be specific and actionable rather than vague or theoretical
+• STAY ON TOPIC: Write specifically about "{section_title}" in the context of "{project_title}"
+• Include concrete examples, realistic data, or domain-specific applications
+• Use appropriate technical or domain terminology (not generic business speak)
+• Demonstrate expertise in this particular subject area
+• Be specific and actionable with real insights, not vague generalities
 • Use transitions between paragraphs for smooth flow
+• Avoid filler phrases like "In today's world" or "It's important to note"
 
 FORMATTING RULES:
 ✗ NO markdown formatting (no **, ##, _italics_, etc.)
 ✗ NO bullet points or lists (write in paragraph form)
-✗ NO placeholder text like "[insert example]"
+✗ NO placeholder text like "[insert example]" or "[add details]"
+✗ NO generic content that could apply to any topic
 ✓ Separate paragraphs with double line breaks
 ✓ Write complete, polished prose ready for publication
+✓ Focus on substance and specificity relevant to this exact topic
 
-Focus on delivering genuine value and insight, not filler content."""
+Write as an expert who truly understands {project_title} and this specific aspect of it."""
 
 
 def refine_section_content(current_content: str, instruction: str, project_type: str) -> str:
@@ -224,6 +234,101 @@ def refine_section_content(current_content: str, instruction: str, project_type:
         if APIError.is_rate_limit(error_msg):
             return APIError.rate_limit()
         return APIError.generation_error(error_msg)
+
+
+def regenerate_with_feedback(current_content: str, user_feedback: str, project_type: str) -> str:
+    """
+    Regenerate content based on user feedback while preserving structure
+
+    Args:
+        current_content: The existing content to regenerate
+        user_feedback: User's feedback on what needs improvement
+        project_type: Either 'pptx' or 'docx'
+
+    Returns:
+        Regenerated content string with structure preserved
+    """
+    if not API_KEY:
+        return APIError.no_api_key()
+
+    model = _get_model()
+
+    if project_type == "pptx":
+        prompt = _build_presentation_feedback_prompt(current_content, user_feedback)
+    else:  # docx
+        prompt = _build_document_feedback_prompt(current_content, user_feedback)
+
+    try:
+        return _generate_content_sync(model, prompt)
+    except Exception as e:
+        error_msg = str(e)
+        if APIError.is_rate_limit(error_msg):
+            return APIError.rate_limit()
+        return APIError.generation_error(error_msg)
+
+
+def _build_presentation_feedback_prompt(current_content: str, user_feedback: str) -> str:
+    """Build prompt for regenerating presentation content based on feedback"""
+    return f"""You are a presentation expert. The user has reviewed a slide and provided feedback.
+
+CURRENT SLIDE:
+{current_content}
+
+USER FEEDBACK: {user_feedback}
+
+CRITICAL REQUIREMENTS:
+1. PRESERVE THE EXACT FORMAT:
+   - Must start with "TITLE: [text]"
+   - Must have "CONTENT:" section
+   - Must use bullet points (•)
+   - Must end with "IMAGE_SUGGESTION: [text]"
+
+2. KEEP THE STRUCTURE:
+   - Same number of bullet points (or ±1)
+   - Same overall layout
+   - Same information hierarchy
+
+3. APPLY THE FEEDBACK:
+   - Address the user's specific concern
+   - Improve the content quality based on their input
+   - Maintain professional presentation standards
+
+OUTPUT THE IMPROVED SLIDE IN THE EXACT SAME FORMAT."""
+
+
+def _build_document_feedback_prompt(current_content: str, user_feedback: str) -> str:
+    """Build prompt for regenerating document content based on feedback"""
+    return f"""You are a document editor. The user reviewed a section and provided feedback.
+
+CURRENT SECTION:
+{current_content}
+
+USER FEEDBACK: {user_feedback}
+
+CRITICAL REQUIREMENTS:
+1. PRESERVE THE EXACT STRUCTURE:
+   - Keep ALL markdown headers (##, ###, ####, etc.) in the same positions
+   - Maintain ALL subsection hierarchies
+   - Preserve ALL tables with same columns and rows
+   - Keep ALL lists (bulleted and numbered) in same locations
+   - Maintain ALL formatting (bold, italic, code blocks, etc.)
+
+2. KEEP THE ORGANIZATION:
+   - Same number of sections and subsections
+   - Same logical flow and progression
+   - Same level of detail and depth
+
+3. APPLY THE FEEDBACK:
+   - Address the user's specific concern about the CONTENT
+   - Improve the writing based on their input
+   - Enhance clarity, accuracy, or style as requested
+
+4. OUTPUT IN MARKDOWN:
+   - Use proper markdown syntax
+   - Maintain professional documentation standards
+   - Return the COMPLETE section with structure intact
+
+DO NOT change the structure, only improve the content within that structure."""
 
 
 def _build_presentation_refinement_prompt(current_content: str, instruction: str) -> str:
@@ -306,45 +411,66 @@ def plan_presentation_structure(user_prompt: str) -> Dict[str, any]:
 
 def _build_presentation_planning_prompt(user_prompt: str) -> str:
     """Build prompt for presentation structure planning"""
-    return f"""You are an expert presentation strategist analyzing a client's needs.
+    return f"""You are an expert presentation strategist. Create a clean, professional slide structure.
 
 CLIENT REQUEST: "{user_prompt}"
 
-Analyze this request and design an optimal presentation structure.
+CRITICAL RULES FOR SLIDE TITLES:
+- Each slide title must be SHORT (maximum 5-7 words)
+- Use PLAIN TEXT ONLY
+- NO asterisks, NO bold formatting (**text**)
+- NO "Slide 1:", "Slide 2:" prefixes
+- NO colons followed by explanations
+- NO parentheses with clarifications
+- NO brackets or placeholders
+- Simple, direct topic names only
 
-PLANNING CONSIDERATIONS:
-1. What is the core message or goal?
-2. Who is the target audience?
-3. What key points must be covered?
-4. What's the logical flow from opening to close?
-5. How many slides create impact without overwhelming? (Typically 6-12)
+REQUIREMENTS:
+- Generate 6-10 slides
+- Each slide = one simple topic
+- Professional but concise
 
-OUTPUT FORMAT (use exactly this format):
-TITLE: [Compelling, clear presentation title that captures the essence]
+OUTPUT FORMAT:
+TITLE: Presentation title here
 
 SLIDES:
-- [Slide 1: Strong opening that hooks the audience]
-- [Slide 2: Context or problem statement]
-- [Slide 3: Main point or solution component 1]
-- [Slide 4: Main point or solution component 2]
-- [Slide 5: Main point or solution component 3]
-- [Continue as needed...]
-- [Final slide: Strong conclusion with call-to-action]
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
+- Slide topic
 
-EXAMPLE OUTPUT:
-TITLE: Revolutionizing Customer Experience Through AI
+CORRECT EXAMPLES:
+TITLE: AI Healthcare Solutions
 SLIDES:
-- Why Customer Experience Matters Today
-- The Challenge: Current Pain Points
-- Our AI-Powered Solution Overview
-- Key Feature: Intelligent Automation
-- Key Feature: Predictive Analytics
-- Real-World Success Stories
-- Implementation Roadmap
-- ROI and Expected Outcomes
-- Next Steps and Call to Action
+- Market Overview
+- Problem Statement
+- Our Technology
+- Clinical Results
+- Business Model
+- Investment Opportunity
 
-Now analyze the client's request and provide the optimal structure:"""
+TITLE: Sustainable Fashion Initiative
+SLIDES:
+- Industry Problems
+- Our Solution
+- Manufacturing Process
+- Product Portfolio
+- Market Strategy
+- Financial Outlook
+
+WRONG - DO NOT DO THIS:
+- **Slide 1: Introduction** (The Hook)
+- The AI Imperative: Defining the current reality
+- Market Overview and Competitive Analysis (Deep Dive)
+
+RIGHT - DO THIS:
+- Introduction
+- Market Reality
+- Competitive Analysis
+
+Now create the structure:"""
 
 
 def plan_document_structure(user_prompt: str) -> Dict[str, any]:
@@ -423,22 +549,24 @@ Now analyze the client's request and provide the optimal structure:"""
 def _parse_structure_response(text: str, content_type: str) -> Dict[str, any]:
     """
     Parse AI response into structured format
-    
+
     Args:
         text: Raw AI response text
         content_type: Either 'slides' or 'sections'
-        
+
     Returns:
         Parsed structure dictionary
     """
+    import re
+
     lines = text.split('\n')
     title = ""
     items = []
-    
+
     in_items_section = False
     for line in lines:
         line = line.strip()
-        
+
         if line.startswith('TITLE:'):
             title = line.replace('TITLE:', '').strip()
         elif line.upper().startswith(content_type.upper() + ':'):
@@ -446,42 +574,86 @@ def _parse_structure_response(text: str, content_type: str) -> Dict[str, any]:
         elif in_items_section and line.startswith('-'):
             item_title = line.lstrip('- ').strip()
             if item_title:
-                items.append(item_title)
-    
+                # Aggressive cleanup for slide titles - ORDER MATTERS!
+                # Step 1: Remove **bold** markdown FIRST (before checking for Slide X:)
+                item_title = re.sub(r'\*\*(.+?)\*\*', r'\1', item_title)
+                # Step 2: Remove any remaining single asterisks
+                item_title = item_title.replace('*', '')
+                # Step 3: Remove "Slide X:" prefix (case insensitive)
+                item_title = re.sub(r'^Slide\s+\d+:\s*', '', item_title, flags=re.IGNORECASE)
+                # Step 4: Remove brackets and their content [like this]
+                item_title = re.sub(r'\[.*?\]', '', item_title)
+                # Step 5: Remove parentheses and their content
+                item_title = re.sub(r'\s*\([^)]*\)', '', item_title)
+                # Step 6: Clean up extra whitespace
+                item_title = re.sub(r'\s+', ' ', item_title).strip()
+
+                if item_title:  # Only add if still has content after cleanup
+                    items.append(item_title)
+
+    # STRICT cap at 10 slides for presentations - enforce before any other processing
+    if content_type == "slides":
+        if len(items) > 10:
+            logger.warning(f"AI generated {len(items)} slides, enforcing limit of 10")
+            items = items[:10]
+        logger.info(f"Final slide count: {len(items)}")
+
     # Provide sensible defaults if parsing fails
     if not title:
         title = "Untitled Presentation" if content_type == "slides" else "Untitled Document"
-    
+
+    # Aggressive title cleanup for presentations
+    if content_type == "slides":
+        # Remove ALL brackets and their content [like this]
+        title = re.sub(r'\[.*?\]', '', title)
+        # Remove markdown bold **text**
+        title = re.sub(r'\*\*(.+?)\*\*', r'\1', title)
+        # Remove parentheses and content
+        title = re.sub(r'\s*\([^)]*\)', '', title)
+        # Remove any asterisks
+        title = title.replace('*', '')
+        # Clean up extra spaces
+        title = re.sub(r'\s+', ' ', title).strip()
+        # Remove trailing punctuation artifacts
+        title = re.sub(r'\s*[:;,]\s*$', '', title)
+        # Remove leading/trailing colons that might be left
+        title = title.strip(':').strip()
+
+        # If title became empty, too short, or contains "with" at the end (artifact), use fallback
+        if not title or len(title) < 5 or title.lower().endswith('with'):
+            logger.warning(f"Title cleanup resulted in invalid title: '{title}', using fallback")
+            title = "Untitled Presentation"
+
     if not items:
         items = (
-            ["Opening", "Main Content", "Closing"] 
-            if content_type == "slides" 
+            ["Opening", "Main Content", "Closing"]
+            if content_type == "slides"
             else ["Introduction", "Main Body", "Conclusion"]
         )
-    
+        logger.warning(f"No items parsed, using defaults")
+
+    logger.info(f"Parsed structure - Title: '{title}', Items: {len(items)}")
     return {"title": title, content_type: items}
 
 
-async def generate_full_latex_document(
-    title: str, 
-    sections: List[str], 
-    project_type: str = "docx", 
+async def generate_full_markdown_document(
+    title: str,
+    sections: List[str],
     user_prompt: str = ""
 ) -> str:
     """
-    Generate a complete, compilable LaTeX document
-    
+    Generate a complete Markdown document with all sections
+
     Args:
         title: Document title
         sections: List of section names
-        project_type: Document type (for logging)
         user_prompt: Original user prompt for context
-        
+
     Returns:
-        Complete LaTeX document as string
+        Complete Markdown document as string
     """
     logger.info("=" * 80)
-    logger.info("GENERATING FULL LATEX DOCUMENT")
+    logger.info("GENERATING FULL MARKDOWN DOCUMENT")
     logger.info(f"Title: {title}")
     logger.info(f"Sections: {sections}")
     logger.info(f"User Prompt: {user_prompt}")
@@ -492,148 +664,198 @@ async def generate_full_latex_document(
         return APIError.no_api_key()
 
     model = _get_model()
-    prompt = _build_latex_generation_prompt(title, sections, user_prompt)
+    prompt = _build_markdown_generation_prompt(title, sections, user_prompt)
 
     try:
-        logger.info("Sending LaTeX generation request to Gemini API...")
-        latex_content = await _generate_content_async(model, prompt)
-        
-        logger.info(f"Received response: {len(latex_content)} characters")
-        
-        # Extract clean LaTeX document
-        latex_content = _extract_latex_document(latex_content)
-        
-        logger.info(f"Final LaTeX document: {len(latex_content)} characters")
+        logger.info("Sending Markdown generation request to Gemini API...")
+        markdown_content = await _generate_content_async(model, prompt)
+
+        logger.info(f"Received response: {len(markdown_content)} characters")
+
+        # Clean up the response (remove code blocks if present)
+        markdown_content = _extract_markdown_document(markdown_content)
+
+        logger.info(f"Final Markdown document: {len(markdown_content)} characters")
         logger.info("=" * 80)
-        
-        return latex_content
-        
+
+        return markdown_content
+
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"LaTeX generation error: {error_msg}")
+        logger.error(f"Markdown generation error: {error_msg}")
         logger.error("=" * 80)
-        
+
         if APIError.is_rate_limit(error_msg):
             return APIError.rate_limit()
         return APIError.generation_error(error_msg)
 
 
-def _build_latex_generation_prompt(title: str, sections: List[str], user_prompt: str) -> str:
-    """Build comprehensive prompt for LaTeX document generation"""
-    sections_formatted = "\n".join([f"  {i+1}. {section}" for i, section in enumerate(sections)])
-    
-    return f"""You are an expert LaTeX document author creating professional, publication-ready documents.
+def _build_markdown_generation_prompt(title: str, sections: List[str], user_prompt: str) -> str:
+    """Build comprehensive prompt for Markdown document generation"""
+    sections_formatted = "\n".join([f"  - {section}" for section in sections])
+
+    return f"""You are an expert professional writer creating comprehensive, well-structured business documents.
 
 PROJECT DETAILS:
-Title: {title}
+Document Title: {title}
 Required Sections:
 {sections_formatted}
 
-User Context: {user_prompt if user_prompt else "Professional business document"}
+Original User Request: "{user_prompt}"
 
-Generate a COMPLETE, COMPILABLE LaTeX document that meets these specifications.
+CONTEXT UNDERSTANDING:
+First, carefully analyze the user's request to understand:
+- What specific topic or subject they want documented
+- What industry, domain, or field this relates to
+- What level of technical depth is appropriate
+- What the purpose and audience of this document should be
+- Any specific focus areas mentioned in their request
+
+Generate a COMPLETE, publication-ready Markdown document that DIRECTLY addresses the user's request with relevant, contextual content.
 
 CRITICAL REQUIREMENTS:
 
-1. DOCUMENT CLASS AND STRUCTURE:
-   - Use: \\documentclass[11pt, a4paper]{{article}}
-   - Use \\section{{}} for main sections (NOT \\chapter{{}})
-   - Include proper preamble with essential packages
+1. DOCUMENT STRUCTURE:
+   - Start with the title as # {title}
+   - Use ## for main section headings (one for each required section in order)
+   - DO NOT include numbers in section headings (e.g., use "## Executive Summary" NOT "## 1. Executive Summary")
+   - Use ### for subsections within each main section to create hierarchy
+   - Use #### for sub-subsections when needed for detailed topics
+   - Create logical flow with smooth transitions between sections
+   - Include all {len(sections)} required sections in order
 
-2. REQUIRED PACKAGES:
-   \\usepackage[margin=1in]{{geometry}}
-   \\usepackage{{hyperref}}
-   \\usepackage{{graphicx}}
-   \\usepackage{{amsmath}}
-   \\usepackage{{enumitem}}
-   \\usepackage{{booktabs}}
+2. CONTENT ORGANIZATION PER SECTION:
+   Each main section (##) should include:
+   - Opening paragraph that introduces the section's purpose and scope
+   - 2-4 subsections (###) that break down the topic into logical parts
+   - Mix of content types: paragraphs, lists, tables, examples
+   - Concluding insights that tie the section together
+   - Total: 300-600 words per main section
 
-3. TITLE FORMATTING (CRITICAL):
-   - Keep title SIMPLE and CLEAN
-   - ✓ CORRECT: \\title{{Business Plan for Tech Startup}}
-   - ✗ WRONG: \\title{{\\vspace{{-2cm}}\\bfseries Business...}}
-   - No formatting commands inside \\title{{}}
-   - Use \\maketitle after \\begin{{document}}
+3. SUBSECTION GUIDELINES:
+   Within each main section, create meaningful subsections like:
+   - Overview/Introduction
+   - Key Concepts/Components
+   - Benefits/Advantages
+   - Challenges/Considerations
+   - Best Practices/Recommendations
+   - Real-world Examples/Case Studies
+   - Implementation Steps
+   Choose subsections that fit the topic naturally
 
-4. CONTENT QUALITY:
-   - Write 3-5 substantial paragraphs per section
-   - Include specific details, examples, and data where relevant
-   - NO placeholders like "Insert content here"
-   - Use professional, authoritative language
-   - Make it comprehensive and valuable
-   - Add relevant equations or lists where appropriate
+4. CONTENT QUALITY AND RELEVANCE:
+   - STAY ON TOPIC: Every section must directly relate to the document title and user's original request
+   - AVOID GENERIC CONTENT: Don't write vague, generic business content that could apply to any topic
+   - BE SPECIFIC: Use concrete examples, specific terminology, and domain-relevant details
+   - DEMONSTRATE EXPERTISE: Show deep understanding of the actual subject matter requested
+   - Use **bold** for critical terms, key concepts, and important data specific to this topic
+   - Use *italic* for definitions, technical terms, or emphasis
+   - Include realistic examples, metrics, and applications relevant to THIS specific subject
+   - NO placeholders like "Insert content here" or "[Add details]"
+   - NO generic business filler like "In today's fast-paced world" or "leveraging synergies"
+   - Support claims with logical reasoning, industry-specific knowledge, or realistic scenarios
+   - When mentioning data, use plausible numbers/percentages that fit the context
 
-5. OUTPUT FORMAT:
-   - Return ONLY raw LaTeX code
-   - NO markdown code blocks (no ```latex)
+5. FORMATTING VARIETY:
+   - Bullet lists (- item) for features, benefits, or related points
+   - Numbered lists (1. item) for steps, sequences, or ranked items
+   - > Blockquotes for key insights, important notes, or expert tips
+   - Tables (| Column |) for comparisons, specifications, or data
+   - `inline code` for technical terms, formulas, or specific values
+   - **Bold lists** for emphasis: **Point:** Description format
+
+6. OUTPUT FORMAT:
+   - Return ONLY raw Markdown content
+   - NO code fences (no ```markdown blocks)
    - NO explanatory text before or after
-   - Start with \\documentclass and end with \\end{{document}}
+   - Start with # {title} and include all sections
+   - Ensure professional polish and readability
 
-TEMPLATE STRUCTURE:
-\\documentclass[11pt, a4paper]{{article}}
-\\usepackage[margin=1in]{{geometry}}
-\\usepackage{{hyperref}}
-\\usepackage{{amsmath}}
+EXAMPLE STRUCTURE WITH DEPTH:
 
-\\title{{{title}}}
-\\author{{Professional Author}}
-\\date{{\\today}}
+# {title}
 
-\\begin{{document}}
-\\maketitle
+## {{First Section Name}}
 
-\\tableofcontents
-\\newpage
+Opening paragraph introducing this section's importance and what will be covered. Set context and explain why this matters to the reader.
 
-\\section{{First Section Name}}
-Comprehensive content with multiple paragraphs...
+### Overview
 
-\\section{{Second Section Name}}
-More detailed, valuable content...
+Comprehensive explanation of the fundamental concepts. Include **key terminology** in bold and provide clear definitions. Make it accessible yet thorough.
 
-% Continue for all sections
+### Key Components
 
-\\end{{document}}
+- **Component 1:** Detailed description with specific examples
+- **Component 2:** Benefits and use cases clearly articulated
+- **Component 3:** How it integrates with the broader system
 
-Now generate the complete, professional LaTeX document:"""
+### Implementation Approach
+
+1. **Initial Assessment:** Analyze current state and requirements
+2. **Strategic Planning:** Define objectives and success metrics
+3. **Execution:** Deploy solutions with proper oversight
+4. **Optimization:** Continuously improve based on feedback
+
+> **Expert Tip:** Provide actionable insight or best practice that adds real value
+
+### Practical Example
+
+Describe a realistic scenario showing how this works in practice. Include specific details and outcomes that demonstrate the concept's effectiveness.
+
+## {{Second Section Name}}
+
+Continue with rich, well-organized content for each section...
+
+### Subsection Title
+
+Content with proper depth, mixing paragraphs and structured elements.
+
+| Feature | Benefit | Implementation |
+|---------|---------|----------------|
+| Feature 1 | Clear value proposition | How to deploy |
+| Feature 2 | Measurable advantage | Step-by-step guide |
+
+### Additional Subsection
+
+More detailed, valuable content with smooth transitions.
+
+## {{Continue for all {len(sections)} sections}}
+
+Each section must be comprehensive, logically structured, and professionally written with appropriate subsections.
+
+CRITICAL REMINDER:
+- Review the user's original request: "{user_prompt}"
+- Ensure EVERY section addresses THIS specific topic, not generic business content
+- Use domain-specific terminology, concepts, and examples
+- Write as a subject matter expert who deeply understands "{title}"
+- Make the content valuable and informative for someone researching this exact topic
+
+Now generate the complete, expertly-structured, highly-relevant Markdown document:"""
 
 
-def _extract_latex_document(raw_content: str) -> str:
+def _extract_markdown_document(raw_content: str) -> str:
     """
-    Extract clean LaTeX document from AI response
-    
+    Extract clean Markdown document from AI response
+
     Args:
-        raw_content: Raw response that may contain markdown or extra text
-        
+        raw_content: Raw response that may contain markdown code blocks or extra text
+
     Returns:
-        Clean LaTeX document
+        Clean Markdown document
     """
-    lines = raw_content.split('\n')
-    start_idx = None
-    end_idx = None
-    
-    # Find document boundaries
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if start_idx is None and stripped.startswith("\\documentclass"):
-            start_idx = i
-        if stripped.startswith("\\end{document}"):
-            end_idx = i
-            break
-    
-    # Extract document if boundaries found
-    if start_idx is not None and end_idx is not None and end_idx > start_idx:
-        latex_content = '\n'.join(lines[start_idx:end_idx + 1])
-        logger.info("Successfully extracted LaTeX document from response")
-        return latex_content
-    
-    # If extraction failed, try to clean up the raw content
-    logger.warning("Could not find document boundaries, attempting cleanup")
-    
-    # Remove markdown code blocks if present
-    cleaned = raw_content.replace('```latex', '').replace('```', '').strip()
-    
-    return cleaned
+    content = raw_content.strip()
+
+    # Remove markdown code fences if present
+    if content.startswith('```markdown'):
+        content = content[len('```markdown'):].strip()
+    elif content.startswith('```'):
+        content = content[3:].strip()
+
+    if content.endswith('```'):
+        content = content[:-3].strip()
+
+    logger.info("Successfully extracted Markdown document from response")
+    return content
 
 
 def chat_with_ai(message: str, project_context: str = "") -> str:
@@ -665,28 +887,35 @@ def chat_with_ai(message: str, project_context: str = "") -> str:
 def _build_chat_prompt(message: str, project_context: str) -> str:
     """Build prompt for AI chat assistant"""
     context_section = f"""
-CURRENT PROJECT CONTEXT:
-{project_context}
-
+PROJECT: {project_context}
 """ if project_context else ""
 
-    return f"""You are an expert AI assistant helping users create professional documents and presentations.
+    return f"""You are a concise AI advisor for document/presentation projects.
 
-{context_section}USER QUESTION: {message}
+{context_section}
+USER: {message}
 
-Provide a helpful, actionable response that:
-• Directly addresses the user's question
-• Offers specific, practical suggestions
-• Maintains a friendly, professional tone
-• Includes concrete examples when relevant
-• Keeps responses concise but thorough (2-4 paragraphs max)
-• Focuses on helping them improve their project
+RESPONSE RULES:
+1. MAXIMUM 3-4 SHORT SENTENCES (50 words total)
+2. Be DIRECT and SPECIFIC - no fluff or introductions
+3. Give ACTIONABLE advice only
+4. Reference specific sections/slides when relevant
+5. Skip explanations unless critical
 
-If asked about content, suggest specific improvements.
-If asked about structure, recommend organizational changes.
-If asked about style, provide formatting or tone guidance.
+GOOD EXAMPLES:
+User: "Make section 2 better"
+You: "In section 2, replace vague terms with specific metrics. Add 2-3 concrete examples. Remove the redundant third paragraph."
 
-Your response:"""
+User: "How to improve my intro?"
+You: "Start with a compelling statistic or question. Cut the first 2 sentences - jump straight to your main point. Add a clear thesis statement at the end."
+
+User: "This slide is boring"
+You: "Reduce text by 50%. Use 1 powerful image. Replace bullets with a simple diagram or chart. Keep only 3 key points maximum."
+
+BAD (too long):
+"Well, I'd be happy to help you improve that section! There are several things you could consider. First, you might want to think about..."
+
+RESPOND NOW (short, direct, specific):"""
 
 
 # Utility function for health check
