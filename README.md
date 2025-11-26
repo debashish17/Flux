@@ -412,62 +412,9 @@ npm run build
 - [ ] Usage statistics
 - [ ] Popular templates
 
----
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how you can help:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Commit your changes**: `git commit -m 'Add amazing feature'`
-4. **Push to the branch**: `git push origin feature/amazing-feature`
-5. **Open a Pull Request**
-
-### Contribution Guidelines
-- Follow existing code style
-- Write clear commit messages
-- Add tests for new features
-- Update documentation
-- Keep PRs focused on single features
-
----
-
-## 🙏 Acknowledgments
-
-- **Google Gemini** - For powering our AI content generation
-- **FastAPI** - For the blazing-fast backend framework
-- **React Team** - For the amazing frontend library
-- **Tailwind CSS** - For making styling a breeze
-- **Prisma** - For type-safe database access
-- **Lucide** - For beautiful icons
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/flux/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/flux/discussions)
-- **Email**: support@flux.dev
-- **Twitter**: [@FluxAI](https://twitter.com/fluxai)
-
----
-
-## 📊 Stats
-
-![GitHub Stars](https://img.shields.io/github/stars/yourusername/flux?style=social)
-![GitHub Forks](https://img.shields.io/github/forks/yourusername/flux?style=social)
-![GitHub Issues](https://img.shields.io/github/issues/yourusername/flux)
-![GitHub Pull Requests](https://img.shields.io/github/issues-pr/yourusername/flux)
 
 ---
 
 <div align="center">
-
-**Made with ❤️ by the FLUX Team**
-
-⭐ Star us on GitHub — it helps!
-
-[Website](https://flux.dev) • [Documentation](https://docs.flux.dev) • [Blog](https://blog.flux.dev)
 
 </div>
