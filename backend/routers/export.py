@@ -12,14 +12,14 @@ async def export_project(project_id: int, db: Prisma = Depends(database.get_db),
             "id": project_id,
             "userId": current_user.id
         },
-        include={
-            "sections": {
-                "order_by": {"orderIndex": "asc"}
-            }
-        }
+        include={"sections": True}
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Sort sections by orderIndex in Python
+    if project.sections:
+        project.sections.sort(key=lambda s: s.orderIndex)
 
     if project.type == "docx":
         file_stream = doc_generator.create_docx(project)

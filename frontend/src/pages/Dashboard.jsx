@@ -47,7 +47,7 @@ export default function Dashboard() {
         // Fetch from API
         console.log('Fetching projects from API');
         setLoading(true);
-        api.get('/projects/')
+        api.get('/projects/?limit=1000')  // Fetch up to 1000 projects (effectively all)
             .then(res => {
                 setProjects(res.data);
                 // Cache the data
@@ -64,6 +64,10 @@ export default function Dashboard() {
 
     const handleLogout = () => {
         localStorage.removeItem('token');
+        // Clear cached projects on logout
+        sessionStorage.removeItem('dashboard_projects');
+        sessionStorage.removeItem('dashboard_cache_timestamp');
+        sessionStorage.removeItem('refresh_dashboard');
         navigate('/login');
     };
 
@@ -80,6 +84,12 @@ export default function Dashboard() {
         }
     };
 
+    // Helper to invalidate cache - call this after create/delete operations
+    const invalidateCache = () => {
+        sessionStorage.removeItem('dashboard_projects');
+        sessionStorage.removeItem('dashboard_cache_timestamp');
+    };
+
     const handleDelete = async () => {
         setIsDeleting(true);
         setError('');
@@ -87,13 +97,11 @@ export default function Dashboard() {
         try {
             await api.delete(`/projects/${deleteModal.projectId}`);
 
-            // Update UI only after successful deletion
-            const updatedProjects = projects.filter(p => p.id !== deleteModal.projectId);
-            setProjects(updatedProjects);
+            // Invalidate cache to ensure fresh data on next load
+            invalidateCache();
 
-            // Update cache with new data
-            sessionStorage.setItem('dashboard_projects', JSON.stringify(updatedProjects));
-            sessionStorage.setItem('dashboard_cache_timestamp', Date.now().toString());
+            // Reload projects from API
+            loadProjects(true);
 
             closeDeleteModal();
         } catch (error) {

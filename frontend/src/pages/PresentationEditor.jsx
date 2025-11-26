@@ -1,10 +1,11 @@
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { Download, RefreshCw, Loader2, MessageSquare, Menu, X, Sparkles, Home, Check } from 'lucide-react';
 import ChatSidebar from '../components/ChatSidebar';
 import SectionFeedback from '../components/SectionFeedback';
+import { errorToast, successToast } from '../utils/toast';
 
 export default function PresentationEditor() {
   const { id } = useParams();
@@ -113,6 +114,10 @@ export default function PresentationEditor() {
     }
     setAutoGenerating(false);
 
+    // Invalidate dashboard cache
+    sessionStorage.removeItem('dashboard_projects');
+    sessionStorage.removeItem('dashboard_cache_timestamp');
+
     if (failedSlides.length > 0) {
       setAutoGenNotice(`Generation completed with ${failedSlides.length} failed slide(s). Refresh to retry.`);
       setTimeout(() => setAutoGenNotice(""), 5000);
@@ -121,26 +126,41 @@ export default function PresentationEditor() {
       setTimeout(() => setAutoGenNotice(""), 3000);
     }
   };
-  // Scroll tracking for active slide
+  // Scroll tracking for active slide with debouncing for better performance
+  const scrollTimerRef = useRef(null);
   useEffect(() => {
     const handleScroll = () => {
-      const slideElements = document.querySelectorAll('.slide-card');
-      let closestSlide = 0;
-      let closestDistance = Infinity;
-      slideElements.forEach((el, idx) => {
-        const rect = el.getBoundingClientRect();
-        const distance = Math.abs(rect.top - 100);
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closestSlide = idx;
-        }
-      });
-      setActiveSlide(closestSlide);
+      // Clear existing timer
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+      }
+
+      // Set new timer - update active slide 100ms after scrolling stops
+      scrollTimerRef.current = setTimeout(() => {
+        const slideElements = document.querySelectorAll('.slide-card');
+        let closestSlide = 0;
+        let closestDistance = Infinity;
+        slideElements.forEach((el, idx) => {
+          const rect = el.getBoundingClientRect();
+          const distance = Math.abs(rect.top - 100);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestSlide = idx;
+          }
+        });
+        setActiveSlide(closestSlide);
+      }, 100);
     };
+
     const scrollContainer = document.getElementById('slides-container');
     if (scrollContainer) {
       scrollContainer.addEventListener('scroll', handleScroll);
-      return () => scrollContainer.removeEventListener('scroll', handleScroll);
+      return () => {
+        scrollContainer.removeEventListener('scroll', handleScroll);
+        if (scrollTimerRef.current) {
+          clearTimeout(scrollTimerRef.current);
+        }
+      };
     }
   }, []);
 
@@ -177,6 +197,16 @@ export default function PresentationEditor() {
     }
     return content;
   };
+
+  // Memoize parsed slides to avoid re-parsing on every render - significant performance improvement
+  const parsedSlides = useMemo(() => {
+    if (!project || !project.sections) return {};
+    const parsed = {};
+    project.sections.forEach(section => {
+      parsed[section.id] = parseSlideContent(section.content);
+    });
+    return parsed;
+  }, [project?.sections]);
 
   const handleTitleEdit = async (sectionId, newTitle) => {
     if (!project) return;
@@ -379,6 +409,10 @@ export default function PresentationEditor() {
           )
         }));
       }
+
+      // Invalidate dashboard cache
+      sessionStorage.removeItem('dashboard_projects');
+      sessionStorage.removeItem('dashboard_cache_timestamp');
     } catch (error) {
       console.error('Generation failed', error);
       setAutoGenNotice("Failed to regenerate slide");
@@ -403,8 +437,11 @@ export default function PresentationEditor() {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      successToast('Presentation exported successfully!');
     } catch (error) {
       console.error('Export failed', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to export presentation';
+      errorToast(`Export failed: ${errorMessage}`);
     } finally {
       setIsExporting(false);
     }
@@ -496,7 +533,7 @@ export default function PresentationEditor() {
               
               <div className="flex-1 overflow-y-auto p-3 space-y-2">
                 {project.sections.map((section, idx) => {
-                  const parsed = parseSlideContent(section.content);
+                  const parsed = parsedSlides[section.id] || { title: '', bullets: [], imageSuggestion: '' };
                   return (
                     <button
                       key={section.id}
@@ -549,7 +586,7 @@ export default function PresentationEditor() {
 
             <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
               {project.sections.map((section, idx) => {
-                const parsed = parseSlideContent(section.content);
+                const parsed = parsedSlides[section.id] || { title: '', bullets: [], imageSuggestion: '' };
                 return (
                   <div
                     key={section.id}

@@ -396,8 +396,20 @@ def create_pptx(project) -> io.BytesIO:
     slide = prs.slides.add_slide(title_slide_layout)
     title = slide.shapes.title
     subtitle = slide.placeholders[1]
+
+    # Format title
     title.text = project.title
+    for paragraph in title.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(44)
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(31, 78, 120)
+
     subtitle.text = "AI-Generated Presentation"
+    for paragraph in subtitle.text_frame.paragraphs:
+        for run in paragraph.runs:
+            run.font.size = Pt(20)
+            run.font.color.rgb = RGBColor(100, 100, 100)
 
     # Content Slides
     for section in sorted(project.sections, key=lambda x: x.orderIndex):
@@ -408,16 +420,18 @@ def create_pptx(project) -> io.BytesIO:
         # Parse the structured content
         parsed = parse_slide_content(section.content or "")
 
-        # Add title
+        # Add title - matching the editor's style (text-4xl font-bold text-gray-900)
         title_box = slide.shapes.add_textbox(
-            Inches(0.5), Inches(0.3), Inches(9), Inches(0.8)
+            Inches(0.5), Inches(0.4), Inches(9), Inches(1)
         )
         title_frame = title_box.text_frame
         title_frame.text = parsed['title'] or section.title
+        title_frame.word_wrap = True
         title_para = title_frame.paragraphs[0]
-        title_para.font.size = Pt(32)
+        title_para.font.size = Pt(36)  # Matches text-4xl
         title_para.font.bold = True
         title_para.font.name = 'Calibri'
+        title_para.font.color.rgb = RGBColor(17, 24, 39)  # text-gray-900
 
         # Determine layout based on whether there's an image suggestion
         if parsed['image_suggestion']:
@@ -434,17 +448,36 @@ def create_pptx(project) -> io.BytesIO:
             content_frame = content_box.text_frame
             content_frame.word_wrap = True
 
-            # Add bullet points
+            # Add bullet points - matching editor style with actual bullets
             for i, bullet in enumerate(parsed['bullets']):
                 if i == 0:
                     p = content_frame.paragraphs[0]
                 else:
                     p = content_frame.add_paragraph()
+
+                # Set bullet text
                 p.text = bullet
                 p.level = 0
-                p.font.size = Pt(18)
+
+                # Add bullet using XML directly
+                from pptx.oxml.xmlchemy import OxmlElement
+                pPr = p._element.get_or_add_pPr()
+
+                # Create bullet node
+                buNone = pPr.find('{http://schemas.openxmlformats.org/drawingml/2006/main}buNone')
+                if buNone is not None:
+                    pPr.remove(buNone)
+
+                # Add bullet character
+                buChar = OxmlElement('a:buChar')
+                buChar.set('char', '•')
+                pPr.append(buChar)
+
+                # Style the text
+                p.font.size = Pt(18)  # text-lg
                 p.font.name = 'Calibri'
-                p.space_before = Pt(6)
+                p.font.color.rgb = RGBColor(55, 65, 81)  # text-gray-700
+                p.space_before = Pt(12)  # space-y-4
 
             # Add image placeholder
             img_left = Inches(6)
@@ -456,10 +489,15 @@ def create_pptx(project) -> io.BytesIO:
                 img_left, img_top, img_width, img_height
             )
             img_frame = img_placeholder.text_frame
+            img_frame.word_wrap = True  # Enable word wrapping
+            img_frame.vertical_anchor = 1  # Middle vertical alignment
+
+            # Add image icon and text
             img_frame.text = f"📷 Image:\n{parsed['image_suggestion']}"
             img_para = img_frame.paragraphs[0]
-            img_para.font.size = Pt(14)
+            img_para.font.size = Pt(12)
             img_para.font.italic = True
+            img_para.font.color.rgb = RGBColor(107, 114, 128)  # Gray
             img_para.alignment = 1  # Center
 
             # Add border to image placeholder
@@ -479,17 +517,36 @@ def create_pptx(project) -> io.BytesIO:
             content_frame = content_box.text_frame
             content_frame.word_wrap = True
 
-            # Add bullet points
+            # Add bullet points - matching editor style with actual bullets
             for i, bullet in enumerate(parsed['bullets']):
                 if i == 0:
                     p = content_frame.paragraphs[0]
                 else:
                     p = content_frame.add_paragraph()
+
+                # Set bullet text
                 p.text = bullet
                 p.level = 0
+
+                # Add bullet using XML directly
+                from pptx.oxml.xmlchemy import OxmlElement
+                pPr = p._element.get_or_add_pPr()
+
+                # Create bullet node
+                buNone = pPr.find('{http://schemas.openxmlformats.org/drawingml/2006/main}buNone')
+                if buNone is not None:
+                    pPr.remove(buNone)
+
+                # Add bullet character
+                buChar = OxmlElement('a:buChar')
+                buChar.set('char', '•')
+                pPr.append(buChar)
+
+                # Style the text
                 p.font.size = Pt(20)
                 p.font.name = 'Calibri'
-                p.space_before = Pt(8)
+                p.font.color.rgb = RGBColor(55, 65, 81)  # text-gray-700
+                p.space_before = Pt(12)  # space-y-4
 
     file_stream = io.BytesIO()
     prs.save(file_stream)

@@ -171,7 +171,14 @@ async def generate_full_document(
             }
         )
 
+    # Update project's updatedAt timestamp
+    await db.project.update(
+        where={"id": project_id},
+        data={"updatedAt": datetime.now()}
+    )
+
     logger.info(f"All {len(sections)} sections updated successfully")
+    logger.info(f"Project updatedAt timestamp refreshed")
     logger.info(f"={'='*80}\n")
 
     return {
@@ -181,15 +188,26 @@ async def generate_full_document(
     }
 
 @router.get("/", response_model=List[ProjectResponse])
-async def get_projects(db: Prisma = Depends(database.get_db), current_user = Depends(auth.get_current_user)):
+async def get_projects(
+    skip: int = 0,
+    limit: int = 20,
+    db: Prisma = Depends(database.get_db),
+    current_user = Depends(auth.get_current_user)
+):
+    """Get user projects with pagination. Default: 20 projects per page."""
     projects = await db.project.find_many(
         where={"userId": current_user.id},
-        include={
-            "sections": {
-                "order_by": {"orderIndex": "asc"}
-            }
-        }
+        include={"sections": True},
+        skip=skip,
+        take=limit,
+        order={"updatedAt": "desc"}
     )
+
+    # Sort sections by orderIndex in Python (Prisma Python doesn't support nested ordering)
+    for project in projects:
+        if project.sections:
+            project.sections.sort(key=lambda s: s.orderIndex)
+
     return projects
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -199,14 +217,15 @@ async def get_project(project_id: int, db: Prisma = Depends(database.get_db), cu
             "id": project_id,
             "userId": current_user.id
         },
-        include={
-            "sections": {
-                "order_by": {"orderIndex": "asc"}
-            }
-        }
+        include={"sections": True}
     )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Sort sections by orderIndex in Python
+    if project.sections:
+        project.sections.sort(key=lambda s: s.orderIndex)
+
     return project
 
 @router.delete("/{project_id}")

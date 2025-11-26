@@ -28,6 +28,13 @@ async def generate_section(section_id: int, db: Prisma = Depends(database.get_db
         data={"content": content}
     )
 
+    # Update project's updatedAt timestamp
+    from datetime import datetime
+    await db.project.update(
+        where={"id": section.project.id},
+        data={"updatedAt": datetime.now()}
+    )
+
     return {"content": content}
 
 @router.post("/refine/{section_id}")
@@ -61,6 +68,13 @@ async def refine_section(section_id: int, request: RefineRequest, db: Prisma = D
         data={"content": new_content}
     )
 
+    # Update project's updatedAt timestamp
+    from datetime import datetime
+    await db.project.update(
+        where={"id": section.project.id},
+        data={"updatedAt": datetime.now()}
+    )
+
     return {"content": new_content}
 
 @router.post("/project/{project_id}/generate-all")
@@ -85,5 +99,13 @@ async def generate_all_sections(project_id: int, db: Prisma = Depends(database.g
                 data={"content": content}
             )
             generated_count += 1
+
+    # Update project's updatedAt timestamp if any sections were generated
+    if generated_count > 0:
+        from datetime import datetime
+        await db.project.update(
+            where={"id": project_id},
+            data={"updatedAt": datetime.now()}
+        )
 
     return {"message": f"Generated content for {generated_count} sections", "count": generated_count}

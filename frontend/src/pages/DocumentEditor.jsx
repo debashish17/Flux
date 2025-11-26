@@ -5,6 +5,7 @@ import { Download, RefreshCw, Loader2, Sparkles, ArrowLeft, MessageSquare, Code,
 import ChatSidebar from '../components/ChatSidebar';
 import DocumentPreview from '../components/DocumentPreview';
 import SectionFeedback from '../components/SectionFeedback';
+import { errorToast, successToast } from '../utils/toast';
 
 
 export default function DocumentEditor() {
@@ -74,6 +75,10 @@ export default function DocumentEditor() {
                 setAutoGenNotice("AI is generating your document...");
                 try {
                     await api.post(`/projects/${currentProject.id}/generate-full-document`);
+
+                    // Invalidate dashboard cache so updated timestamp is visible
+                    sessionStorage.removeItem('dashboard_projects');
+                    sessionStorage.removeItem('dashboard_cache_timestamp');
 
                     // Reload project
                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -167,6 +172,10 @@ export default function DocumentEditor() {
                 s.id === sectionId ? { ...s, content: res.data.content } : s
             );
             setProject({ ...project, sections: updatedSections });
+
+            // Invalidate dashboard cache
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
         } catch (error) {
             console.error('Generation failed', error);
         } finally {
@@ -189,6 +198,10 @@ export default function DocumentEditor() {
             );
             setProject({ ...project, sections: updatedSections });
             setRefinementPrompts({ ...refinementPrompts, [sectionId]: '' });
+
+            // Invalidate dashboard cache
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
         } catch (error) {
             console.error('Refinement failed', error);
         } finally {
@@ -206,8 +219,11 @@ export default function DocumentEditor() {
             link.setAttribute('download', `${project.title}.${project.type}`);
             document.body.appendChild(link);
             link.click();
+            successToast('Document exported successfully!');
         } catch (error) {
             console.error('Export failed', error);
+            const errorMessage = error.response?.data?.detail || error.message || 'Failed to export document';
+            errorToast(`Export failed: ${errorMessage}`);
         } finally {
             setIsExporting(false);
         }

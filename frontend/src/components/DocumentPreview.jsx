@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TurndownService from 'turndown';
@@ -13,15 +13,16 @@ import './DocumentPreview.css';
 export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', feedbackCache = {}, onSectionUpdate, onSectionRefresh }) {
   const [editingSection, setEditingSection] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
-  const turndownService = new TurndownService();
+  // Memoize TurndownService to avoid creating new instance on every render
+  const turndownService = useMemo(() => new TurndownService(), []);
   const editorWrapperRef = useRef(null);
 
-  // TipTap rich text editor
+  // TipTap rich text editor - disabled during save to prevent concurrent edits
   const editor = useEditor({
     extensions: [StarterKit],
-    editable: true,
+    editable: !isSaving,
     content: '',
-  });
+  }, [isSaving]);
   if (!sections || sections.length === 0) {
     return (
       <div className="document-preview-empty">

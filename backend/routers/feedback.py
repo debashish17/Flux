@@ -82,10 +82,18 @@ async def get_project_feedback_batch(
     """Get feedback for all sections in a project (batch request to reduce API calls)"""
     logger.info(f"GET /feedback/projects/{project_id}/batch")
 
-    # Verify project exists and user has access
+    # Verify project exists and user has access - use nested include to avoid N+1 query
     project = await db.project.find_unique(
         where={"id": project_id},
-        include={"sections": True}
+        include={
+            "sections": {
+                "include": {
+                    "feedback": {
+                        "where": {"userId": current_user.id}
+                    }
+                }
+            }
+        }
     )
 
     if not project:
@@ -94,26 +102,16 @@ async def get_project_feedback_batch(
     if project.userId != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Get all section IDs
-    section_ids = [section.id for section in project.sections]
-
-    # Get all feedback for these sections in one query
-    all_feedback = await db.sectionfeedback.find_many(
-        where={
-            "sectionId": {"in": section_ids},
-            "userId": current_user.id
-        }
-    )
-
     # Build response: {sectionId: {userFeedback: "like"/"dislike"/null}}
     feedback_map = {}
-    for section_id in section_ids:
-        user_feedback_record = next((f for f in all_feedback if f.sectionId == section_id), None)
-        feedback_map[section_id] = {
-            "userFeedback": user_feedback_record.type if user_feedback_record else None
+    for section in project.sections:
+        # Each section now has feedback included
+        user_feedback = section.feedback[0] if section.feedback else None
+        feedback_map[section.id] = {
+            "userFeedback": user_feedback.type if user_feedback else None
         }
 
-    logger.info(f"Returned batch feedback for {len(section_ids)} sections")
+    logger.info(f"Returned batch feedback for {len(project.sections)} sections")
     return feedback_map
 
 
@@ -138,13 +136,20 @@ async def get_feedback(
     if section.project.userId != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Get feedback stats
-    feedback_list = await db.sectionfeedback.find_many(
-        where={"sectionId": section_id}
+    # Get feedback stats using database COUNT queries for better performance
+    likes_count = await db.sectionfeedback.count(
+        where={
+            "sectionId": section_id,
+            "type": "like"
+        }
     )
 
-    likes = sum(1 for f in feedback_list if f.type == "like")
-    dislikes = sum(1 for f in feedback_list if f.type == "dislike")
+    dislikes_count = await db.sectionfeedback.count(
+        where={
+            "sectionId": section_id,
+            "type": "dislike"
+        }
+    )
 
     # Get current user's feedback
     user_feedback = await db.sectionfeedback.find_unique(
@@ -157,8 +162,8 @@ async def get_feedback(
     )
 
     return {
-        "likes": likes,
-        "dislikes": dislikes,
+        "likes": likes_count,
+        "dislikes": dislikes_count,
         "userFeedback": user_feedback.type if user_feedback else None
     }
 

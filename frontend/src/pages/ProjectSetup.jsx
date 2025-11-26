@@ -88,7 +88,9 @@ export default function ProjectSetup() {
                 prompt: userPrompt
             });
 
-            // Set flag to refresh dashboard when user returns
+            // Invalidate dashboard cache to ensure fresh data on return
+            sessionStorage.removeItem('dashboard_projects');
+            sessionStorage.removeItem('dashboard_cache_timestamp');
             sessionStorage.setItem('refresh_dashboard', 'true');
 
             // Navigate to the editor
