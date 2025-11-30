@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TurndownService from 'turndown';
+import { marked } from 'marked';
 import SectionFeedback from './SectionFeedback';
+import SectionRefinementHistory from './SectionRefinementHistory';
 import './DocumentPreview.css';
 
 /**
@@ -10,19 +12,33 @@ import './DocumentPreview.css';
  * Renders HTML preview with inline rich text editing
  * Auto-saves on click outside or Ctrl+S
  */
-export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', feedbackCache = {}, onSectionUpdate, onSectionRefresh }) {
+export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', projectId, onSectionUpdate, onSectionRefresh, onFeedbackMapChange }) {
   const [editingSection, setEditingSection] = useState(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [localSections, setLocalSections] = useState(sections); // Local state for optimistic updates
+  const [sectionFeedback, setSectionFeedback] = useState({}); // Track feedback for all sections: { sectionId: { type: 'LIKE'|'DISLIKE', comment: string } }
   // Memoize TurndownService to avoid creating new instance on every render
   const turndownService = useMemo(() => new TurndownService(), []);
   const editorWrapperRef = useRef(null);
+  const savingRef = useRef(false); // Track if save is in progress to prevent duplicate calls
 
-  // TipTap rich text editor - disabled during save to prevent concurrent edits
+  // Update local sections when props change
+  useEffect(() => {
+    setLocalSections(sections);
+  }, [sections]);
+
+  // Notify parent when feedback map changes
+  useEffect(() => {
+    if (onFeedbackMapChange) {
+      onFeedbackMapChange(sectionFeedback);
+    }
+  }, [sectionFeedback, onFeedbackMapChange]);
+
+  // TipTap rich text editor - always editable for smooth UX
   const editor = useEditor({
     extensions: [StarterKit],
-    editable: !isSaving,
+    editable: true,
     content: '',
-  }, [isSaving]);
+  });
   if (!sections || sections.length === 0) {
     return (
       <div className="document-preview-empty">
@@ -34,7 +50,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
   // Extract TOC from sections
   const extractTOC = () => {
     const tocEntries = [];
-    sections.forEach(section => {
+    localSections.forEach(section => {
       if (section.content) {
         const lines = section.content.split('\n');
         lines.forEach(line => {
@@ -62,32 +78,44 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
   };
 
   const saveEdit = async (sectionId) => {
+    // Prevent duplicate saves
+    if (savingRef.current) {
+      console.log('Save already in progress, skipping...');
+      return;
+    }
+
     if (!onSectionUpdate || !editor) {
       cancelEdit();
       return;
     }
 
-    setIsSaving(true);
     try {
+      savingRef.current = true;
+      console.log('Saving section:', sectionId);
+
       // Get HTML from TipTap editor
       const html = editor.getHTML();
 
       // Convert HTML to Markdown for backend storage
       const markdown = turndownService.turndown(html);
 
-      // Save to backend
+      // Save to backend FIRST
       await onSectionUpdate(sectionId, markdown);
 
+      // Only close editor and update UI after successful save
       cancelEdit();
+
     } catch (error) {
       console.error('Failed to save edit:', error);
-      setIsSaving(false);
+      alert('Failed to save. Please try again.');
+      // Keep editor open so user can retry
+    } finally {
+      savingRef.current = false;
     }
   };
 
   const cancelEdit = () => {
     setEditingSection(null);
-    setIsSaving(false);
     if (editor) {
       editor.commands.setContent('');
     }
@@ -95,8 +123,10 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
 
   // Auto-save on click outside
   useEffect(() => {
+    if (!editingSection) return;
+
     const handleClickOutside = (event) => {
-      if (editingSection && editorWrapperRef.current && !editorWrapperRef.current.contains(event.target)) {
+      if (editorWrapperRef.current && !editorWrapperRef.current.contains(event.target)) {
         saveEdit(editingSection);
       }
     };
@@ -105,7 +135,8 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [editingSection]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSection]); // saveEdit uses latest closure via editingSection dependency
 
   // Ctrl+S / Cmd+S keyboard shortcut
   useEffect(() => {
@@ -122,7 +153,8 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [editingSection]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSection]); // saveEdit uses latest closure via editingSection dependency
 
   // Code view - show raw Markdown (READ-ONLY)
   if (viewMode === 'code') {
@@ -131,10 +163,10 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
         <div className="code-container">
           <pre>
             <code>
-              {sections.map((section, idx) => (
+              {localSections.map((section, idx) => (
                 <div key={idx} className="code-section">
                   {section.content || ''}
-                  {idx < sections.length - 1 && '\n\n'}
+                  {idx < localSections.length - 1 && '\n\n'}
                 </div>
               ))}
             </code>
@@ -182,13 +214,15 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
         )}
 
         {/* Content Pages - MS Word-style Rich Text Editing */}
-        {sections.map((section, idx) => {
+        {localSections.map((section, idx) => {
           const isEditingThis = editingSection === section.id;
+          // Convert markdown to HTML on the frontend
+          const htmlContent = section.content ? marked(section.content) : '';
 
           return (
             <div key={section.id || idx} className="document-page">
               <div className="page-content">
-                {section.htmlContent ? (
+                {htmlContent ? (
                   isEditingThis ? (
                     // Editing mode - Rich Text Editor
                     <div className="rendered-content editing-mode" ref={editorWrapperRef}>
@@ -203,7 +237,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
 
                         {/* Save hint */}
                         <div className="text-xs text-gray-500 mt-3">
-                          {isSaving ? 'Saving...' : 'Press Ctrl+S to save or click outside'}
+                          Press Ctrl+S to save or click outside
                         </div>
                       </div>
                     </div>
@@ -212,43 +246,63 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
                     <>
                       <div
                         className="rendered-content editable-preview"
-                        onClick={() => onSectionUpdate && startEdit(section.id, section.htmlContent)}
+                        onClick={() => onSectionUpdate && startEdit(section.id, htmlContent)}
                         style={{ cursor: onSectionUpdate ? 'text' : 'default' }}
                         title={onSectionUpdate ? "Click anywhere to edit" : ""}
-                        dangerouslySetInnerHTML={{ __html: section.htmlContent }}
+                        dangerouslySetInnerHTML={{ __html: htmlContent }}
                       />
 
-                      {/* Feedback Section - key forces re-render when content changes */}
+                      {/* Feedback Section */}
                       <div className="mt-4 pt-4 border-t border-gray-200">
                         <SectionFeedback
-                          key={`feedback-${section.id}-${section.htmlContent?.substring(0, 50)}`}
+                          key={`feedback-${section.id}`}
                           sectionId={section.id}
-                          initialFeedback={feedbackCache[section.id]?.userFeedback}
+                          projectId={projectId}
+                          onFeedbackChange={(type, comment) => {
+                            setSectionFeedback(prev => ({
+                              ...prev,
+                              [section.id]: type ? { type, comment } : null
+                            }));
+                          }}
+                          historyButton={
+                            <SectionRefinementHistory
+                              sectionId={section.id}
+                              isOpen={true}
+                              onRestore={() => {
+                                if (onSectionRefresh) {
+                                  onSectionRefresh(section.id);
+                                }
+                              }}
+                              onClose={() => {
+                                // This will be handled by SectionFeedback's toggle
+                              }}
+                            />
+                          }
                         />
                       </div>
                     </>
                   )
-                ) : section.content ? (
-                  <div className="rendered-content">
-                    <h2>{section.title}</h2>
-                    <p className="text-gray-500 italic">
-                      (HTML preview not available - showing raw content)
-                    </p>
-                    <pre className="whitespace-pre-wrap">{section.content}</pre>
-
-                    {/* Feedback Section - key forces re-render when content changes */}
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <SectionFeedback
-                        key={`feedback-${section.id}-${section.content?.substring(0, 50)}`}
-                        sectionId={section.id}
-                        initialFeedback={feedbackCache[section.id]?.userFeedback}
-                      />
-                    </div>
-                  </div>
                 ) : (
                   <div className="rendered-content">
                     <h2>{section.title}</h2>
-                    <p className="text-gray-400 italic">No content generated yet</p>
+                    <p className="text-gray-500 italic">
+                      No content generated yet
+                    </p>
+
+                    {/* Feedback Section */}
+                    <div className="mt-4 pt-4 border-gray-200">
+                      <SectionFeedback
+                        key={`feedback-${section.id}`}
+                        sectionId={section.id}
+                        projectId={projectId}
+                        onFeedbackChange={(type, comment) => {
+                          setSectionFeedback(prev => ({
+                            ...prev,
+                            [section.id]: type ? { type, comment } : null
+                          }));
+                        }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>

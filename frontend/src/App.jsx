@@ -1,5 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProjectSetup from './pages/ProjectSetup';
@@ -51,15 +53,18 @@ function EditorRouter() {
 }
 
 function App() {
+  const token = localStorage.getItem('token');
+
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/" element={token ? <Navigate to="/dashboard" /> : <Landing />} />
+        <Route path="/login" element={token ? <Navigate to="/dashboard" /> : <Login />} />
         <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
         <Route path="/create" element={<PrivateRoute><ProjectSetup /></PrivateRoute>} />
         <Route path="/editor/:id" element={<PrivateRoute><EditorRouter /></PrivateRoute>} />
       </Routes>
+      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
     </Router>
   );
 }

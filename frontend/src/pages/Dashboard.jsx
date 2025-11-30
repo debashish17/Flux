@@ -1,74 +1,48 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../api';
-import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut, RefreshCw } from 'lucide-react';
+import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut } from 'lucide-react';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 
 export default function Dashboard() {
     const navigate = useNavigate();
-    const [projects, setProjects] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
     const [deleteModal, setDeleteModal] = useState({ isOpen: false, projectId: null, projectTitle: '' });
-    const [isDeleting, setIsDeleting] = useState(false);
     const [error, setError] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState('recent'); // recent, name-asc, name-desc, type
     const [filterType, setFilterType] = useState('all'); // all, docx, pptx
     const [showFilters, setShowFilters] = useState(false);
 
-    useEffect(() => {
-        // Check if we should force refresh (e.g., after creating a project)
-        const shouldRefresh = sessionStorage.getItem('refresh_dashboard');
-        if (shouldRefresh) {
-            sessionStorage.removeItem('refresh_dashboard');
-            loadProjects(true); // Force refresh
-        } else {
-            loadProjects();
-        }
-    }, []);
+    // Fetch projects with React Query
+    const { data: projects = [], isLoading: loading, isError } = useQuery({
+        queryKey: ['projects'],
+        queryFn: async () => {
+            const response = await api.get('/projects/?limit=1000');
+            return response.data;
+        },
+    });
 
-    const loadProjects = (forceRefresh = false) => {
-        // Try to load from cache first
-        const cachedData = sessionStorage.getItem('dashboard_projects');
-        const cacheTimestamp = sessionStorage.getItem('dashboard_cache_timestamp');
-        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-
-        // Use cache if it exists, is valid, and not forcing refresh
-        if (!forceRefresh && cachedData && cacheTimestamp) {
-            const cacheAge = Date.now() - parseInt(cacheTimestamp);
-            if (cacheAge < CACHE_DURATION) {
-                console.log('Loading projects from cache');
-                setProjects(JSON.parse(cachedData));
-                setLoading(false);
-                return;
-            }
-        }
-
-        // Fetch from API
-        console.log('Fetching projects from API');
-        setLoading(true);
-        api.get('/projects/?limit=1000')  // Fetch up to 1000 projects (effectively all)
-            .then(res => {
-                setProjects(res.data);
-                // Cache the data
-                sessionStorage.setItem('dashboard_projects', JSON.stringify(res.data));
-                sessionStorage.setItem('dashboard_cache_timestamp', Date.now().toString());
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error(err);
-                setError('Failed to load projects');
-                setLoading(false);
-            });
-    };
+    // Delete mutation with automatic cache invalidation
+    const deleteMutation = useMutation({
+        mutationFn: (projectId) => api.delete(`/projects/${projectId}`),
+        onSuccess: () => {
+            // Invalidate and refetch projects
+            queryClient.invalidateQueries(['projects']);
+            setDeleteModal({ isOpen: false, projectId: null, projectTitle: '' });
+            setError('');
+        },
+        onError: (error) => {
+            console.error('Failed to delete project', error);
+            setError('Failed to delete project. Please try again.');
+        },
+    });
 
     const handleLogout = () => {
         localStorage.removeItem('token');
-        // Clear cached projects on logout
-        sessionStorage.removeItem('dashboard_projects');
-        sessionStorage.removeItem('dashboard_cache_timestamp');
-        sessionStorage.removeItem('refresh_dashboard');
-        navigate('/login');
+        queryClient.clear(); // Clear all React Query cache
+        window.location.href = '/login'; // Force full reload to update auth state
     };
 
     const openDeleteModal = (e, projectId, projectTitle) => {
@@ -79,37 +53,14 @@ export default function Dashboard() {
     };
 
     const closeDeleteModal = () => {
-        if (!isDeleting) {
+        if (!deleteMutation.isPending) {
             setDeleteModal({ isOpen: false, projectId: null, projectTitle: '' });
         }
     };
 
-    // Helper to invalidate cache - call this after create/delete operations
-    const invalidateCache = () => {
-        sessionStorage.removeItem('dashboard_projects');
-        sessionStorage.removeItem('dashboard_cache_timestamp');
-    };
-
     const handleDelete = async () => {
-        setIsDeleting(true);
         setError('');
-
-        try {
-            await api.delete(`/projects/${deleteModal.projectId}`);
-
-            // Invalidate cache to ensure fresh data on next load
-            invalidateCache();
-
-            // Reload projects from API
-            loadProjects(true);
-
-            closeDeleteModal();
-        } catch (error) {
-            console.error('Failed to delete project', error);
-            setError(error.response?.data?.detail || 'Failed to delete project. Please try again.');
-        } finally {
-            setIsDeleting(false);
-        }
+        deleteMutation.mutate(deleteModal.projectId);
     };
 
     // Calculate statistics
@@ -165,14 +116,6 @@ export default function Dashboard() {
                 <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
                     <h1 className="text-xl font-semibold text-gray-900">My Projects</h1>
                     <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => loadProjects(true)}
-                            disabled={loading}
-                            className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-                            title="Refresh projects"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                        </button>
                         <button
                             onClick={handleLogout}
                             className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 text-sm font-medium transition-colors"
@@ -424,7 +367,7 @@ export default function Dashboard() {
                 onClose={closeDeleteModal}
                 onConfirm={handleDelete}
                 projectTitle={deleteModal.projectTitle}
-                isDeleting={isDeleting}
+                isDeleting={deleteMutation.isPending}
             />
         </div>
     );

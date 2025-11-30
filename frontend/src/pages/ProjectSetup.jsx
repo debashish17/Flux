@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../api';
 import { Plus, Trash2, Sparkles, Wand2, Loader2, FileText, Presentation } from 'lucide-react';
 
 export default function ProjectSetup() {
+    const queryClient = useQueryClient();
     const [userPrompt, setUserPrompt] = useState('');
     const [title, setTitle] = useState('');
     const [type, setType] = useState('docx');
@@ -26,13 +28,10 @@ export default function ProjectSetup() {
         setIsPlanning(true);
         setAiError("");
         try {
-            console.log('Sending request to /projects/plan with:', { prompt: userPrompt, type });
             const response = await api.post('/projects/plan', {
                 prompt: userPrompt,
                 type: type
             });
-
-            console.log('Received response:', response.data);
 
             if (response.data.error) {
                 setAiError(response.data.error);
@@ -88,10 +87,8 @@ export default function ProjectSetup() {
                 prompt: userPrompt
             });
 
-            // Invalidate dashboard cache to ensure fresh data on return
-            sessionStorage.removeItem('dashboard_projects');
-            sessionStorage.removeItem('dashboard_cache_timestamp');
-            sessionStorage.setItem('refresh_dashboard', 'true');
+            // Invalidate React Query cache for projects
+            queryClient.invalidateQueries(['projects']);
 
             // Navigate to the editor
             navigate(`/editor/${response.data.id}`);

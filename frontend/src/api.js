@@ -114,9 +114,10 @@ const mockAdapter = async (config) => {
 };
 
 const api = axios.create({
-    baseURL: 'http://localhost:8000',
+    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
     // Use mock adapter if enabled, otherwise default (undefined means default)
-    adapter: USE_MOCK ? mockAdapter : undefined
+    adapter: USE_MOCK ? mockAdapter : undefined,
+    timeout: 120000 // 2 minute default timeout (AI operations can be slow)
 });
 
 api.interceptors.request.use(
@@ -136,12 +137,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        // If we get a 401 Unauthorized, clear token and cached data, then redirect to login
+        // If we get a 401 Unauthorized, clear token and redirect to login
+        // React Query cache will be cleared by the logout handler
         if (error.response && error.response.status === 401) {
             localStorage.removeItem('token');
-            sessionStorage.removeItem('dashboard_projects');
-            sessionStorage.removeItem('dashboard_cache_timestamp');
-            sessionStorage.removeItem('refresh_dashboard');
             window.location.href = '/login';
         }
         return Promise.reject(error);

@@ -16,20 +16,14 @@ export default function Login() {
                 ? new URLSearchParams({ username: email, password })
                 : { email, password };
 
-            console.log('Attempting login to:', endpoint);
             const response = await api.post(endpoint, payload, {
                 headers: isLogin ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}
             });
 
-            console.log('Login Response:', response);
-
             if (response.data && response.data.access_token) {
                 localStorage.setItem('token', response.data.access_token);
-                // Clear any cached data from previous user
-                sessionStorage.removeItem('dashboard_projects');
-                sessionStorage.removeItem('dashboard_cache_timestamp');
-                sessionStorage.removeItem('refresh_dashboard');
-                navigate('/');
+                // React Query will fetch fresh data on mount
+                navigate('/dashboard');
             } else {
                 console.error('Invalid response structure:', response);
                 alert('Login failed: Invalid server response');

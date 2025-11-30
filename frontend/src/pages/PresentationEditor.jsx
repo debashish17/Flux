@@ -1,21 +1,35 @@
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../api';
-import { Download, RefreshCw, Loader2, MessageSquare, Menu, X, Sparkles, Home, Check } from 'lucide-react';
+import { Download, RefreshCw, Loader2, MessageSquare, Menu, X, Sparkles, Home, Check, ArrowUpDown } from 'lucide-react';
 import ChatSidebar from '../components/ChatSidebar';
 import SectionFeedback from '../components/SectionFeedback';
+import SectionRefinementHistory from '../components/SectionRefinementHistory';
+import SectionReorder from '../components/SectionReorder';
 import { errorToast, successToast } from '../utils/toast';
+import { useProject } from '../hooks/useProject';
+import { useUpdateSection } from '../hooks/useSections';
+import { useGenerateSection, useRegenerateWithFeedback } from '../hooks/useGeneration';
+import { useExportProject } from '../hooks/useExport';
+import { debounce } from 'lodash';
 
 export default function PresentationEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const queryClient = useQueryClient();
+
+  // React Query hooks
+  const { data: project, isLoading } = useProject(id);
+  const updateSection = useUpdateSection();
+  const generateSectionMutation = useGenerateSection();
+  const regenerateWithFeedback = useRegenerateWithFeedback();
+  const exportProject = useExportProject();
   const [chatOpen, setChatOpen] = useState(false);
   const [slidesOpen, setSlidesOpen] = useState(true);
   const [activeSlide, setActiveSlide] = useState(0);
+  const [showReorder, setShowReorder] = useState(false);
   const [generatingSlides, setGeneratingSlides] = useState(new Set());
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [autoGenNotice, setAutoGenNotice] = useState("");
@@ -29,35 +43,23 @@ export default function PresentationEditor() {
   const [tempBullet, setTempBullet] = useState("");
   const [tempImage, setTempImage] = useState("");
 
-  // Load project from API and auto-generate empty slides
+  // Debounced section update function to reduce API calls
+  const debouncedSectionUpdate = useCallback(
+    debounce((sectionId, updates) => {
+      updateSection.mutate({ sectionId, updates, projectId: parseInt(id) });
+    }, 1000), // Wait 1 second after last edit
+    [id]
+  );
+
+  // Auto-generate content for empty sections on mount
   useEffect(() => {
-    loadProject();
-  }, [id]);
-
-  const loadProject = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get(`/projects/${id}`);
-      setProject(res.data);
-
-      // Load feedback in batch (single API call instead of N calls)
-      try {
-        const feedbackRes = await api.get(`/feedback/projects/${id}/batch`);
-        setFeedbackCache(feedbackRes.data);
-      } catch (error) {
-        console.error('Failed to load feedback batch:', error);
-      }
-      // Auto-generate content for empty sections
-      const emptySections = res.data.sections.filter(s => !s.content || s.content.trim() === '');
+    if (project && project.type === 'pptx' && project.sections.length > 0) {
+      const emptySections = project.sections.filter(s => !s.content || s.content.trim() === '');
       if (emptySections.length > 0) {
         startAutoGeneration(emptySections);
       }
-    } catch (error) {
-      console.error('Failed to load project', error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [project?.id]); // Only run when project ID changes
 
   // AI auto-generation batching logic
   const startAutoGeneration = async (emptySections) => {
@@ -83,13 +85,10 @@ export default function PresentationEditor() {
 
         while (retries > 0 && !success) {
           try {
-            const res = await api.post(`/generate/section/${section.id}`);
-            setProject(prev => ({
-              ...prev,
-              sections: prev.sections.map(s =>
-                s.id === section.id ? { ...s, content: res.data.content } : s
-              )
-            }));
+            await generateSectionMutation.mutateAsync({
+              sectionId: section.id,
+              projectId: parseInt(id)
+            });
             success = true;
           } catch (error) {
             retries--;
@@ -115,8 +114,7 @@ export default function PresentationEditor() {
     setAutoGenerating(false);
 
     // Invalidate dashboard cache
-    sessionStorage.removeItem('dashboard_projects');
-    sessionStorage.removeItem('dashboard_cache_timestamp');
+    queryClient.invalidateQueries(['projects']);
 
     if (failedSlides.length > 0) {
       setAutoGenNotice(`Generation completed with ${failedSlides.length} failed slide(s). Refresh to retry.`);
@@ -208,104 +206,119 @@ export default function PresentationEditor() {
     return parsed;
   }, [project?.sections]);
 
-  const handleTitleEdit = async (sectionId, newTitle) => {
+  const handleTitleEdit = (sectionId, newTitle) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.title = newTitle;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { title: newTitle, content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update - update cache immediately
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent, title: newTitle } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update title', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { title: newTitle, content: updatedContent });
   };
 
-  const handleBulletEdit = async (sectionId, bulletIndex, newText) => {
+  const handleBulletEdit = (sectionId, bulletIndex, newText) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets[bulletIndex] = newText;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update bullet', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
-  const handleBulletDelete = async (sectionId, bulletIndex) => {
+  const handleBulletDelete = (sectionId, bulletIndex) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets.splice(bulletIndex, 1);
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to delete bullet', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
-  const handleBulletAdd = async (sectionId) => {
+  const handleBulletAdd = (sectionId) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets.push('New bullet point');
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to add bullet', error);
-    }
+      };
+    });
+
+    // Immediate API call (not debounced for adding new items)
+    updateSection.mutate({ sectionId, updates: { content: updatedContent }, projectId: parseInt(id) });
   };
 
-  const handleImageEdit = async (sectionId, newImage) => {
+  const handleImageEdit = (sectionId, newImage) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.imageSuggestion = newImage;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update image suggestion', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
   const startTitleEdit = (sectionId, currentTitle) => {
@@ -363,7 +376,7 @@ export default function PresentationEditor() {
     const cachedFeedback = feedbackCache[sectionId]?.userFeedback;
 
     // If user liked the slide, show warning and prevent regeneration
-    if (cachedFeedback === 'like') {
+    if (cachedFeedback === 'LIKE') {
       const confirmRegenerate = window.confirm(
         "You marked this slide as 'liked'. Regenerating will create new content. Are you sure you want to continue?"
       );
@@ -374,22 +387,19 @@ export default function PresentationEditor() {
 
     setGeneratingSlides(prev => new Set(prev).add(sectionId));
 
-    const isRegeneratingWithFeedback = cachedFeedback === 'dislike';
+    const isRegeneratingWithFeedback = cachedFeedback === 'DISLIKE';
 
     try {
       if (isRegeneratingWithFeedback) {
         // Show notice that we're applying feedback
         setAutoGenNotice("Applying your feedback...");
 
-        // Regenerate with feedback - backend will fetch comments
-        const res = await api.post(`/feedback/sections/${sectionId}/regenerate`);
-
-        setProject(prev => ({
-          ...prev,
-          sections: prev.sections.map(s =>
-            s.id === sectionId ? { ...s, content: res.data.content } : s
-          )
-        }));
+        // Regenerate with feedback using the hook
+        await regenerateWithFeedback.mutateAsync({
+          sectionId,
+          feedback: '', // Backend will fetch comments from database
+          projectId: parseInt(id)
+        });
 
         // Clear feedback cache - backend deletes the feedback record
         setFeedbackCache(prev => ({
@@ -401,18 +411,11 @@ export default function PresentationEditor() {
         setTimeout(() => setAutoGenNotice(""), 3000);
       } else {
         // No dislike feedback, do regular generation
-        const res = await api.post(`/generate/section/${sectionId}`);
-        setProject(prev => ({
-          ...prev,
-          sections: prev.sections.map(s =>
-            s.id === sectionId ? { ...s, content: res.data.content } : s
-          )
-        }));
+        await generateSectionMutation.mutateAsync({
+          sectionId,
+          projectId: parseInt(id)
+        });
       }
-
-      // Invalidate dashboard cache
-      sessionStorage.removeItem('dashboard_projects');
-      sessionStorage.removeItem('dashboard_cache_timestamp');
     } catch (error) {
       console.error('Generation failed', error);
       setAutoGenNotice("Failed to regenerate slide");
@@ -426,24 +429,34 @@ export default function PresentationEditor() {
     }
   };
 
-  const handleExport = async () => {
-    setIsExporting(true);
+  const handleExport = () => {
+    exportProject.mutate(
+      {
+        projectId: parseInt(id),
+        title: project.title,
+        type: project.type
+      },
+      {
+        onSuccess: () => {
+          successToast('Presentation exported successfully!');
+        },
+        onError: (error) => {
+          const errorMessage = error.response?.data?.detail || error.message || 'Failed to export presentation';
+          errorToast(`Export failed: ${errorMessage}`);
+        }
+      }
+    );
+  };
+
+  const handleReorderSections = async (newOrder) => {
     try {
-      const response = await api.get(`/export/${id}`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${project.title}.${project.type}`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      successToast('Presentation exported successfully!');
+      await api.patch(`/projects/${id}/sections/reorder`, { sectionOrder: newOrder });
+      queryClient.invalidateQueries(['projects', parseInt(id)]);
+      successToast('Sections reordered successfully!');
+      setShowReorder(false);
     } catch (error) {
-      console.error('Export failed', error);
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to export presentation';
-      errorToast(`Export failed: ${errorMessage}`);
-    } finally {
-      setIsExporting(false);
+      errorToast('Failed to reorder sections');
+      console.error('Reorder error:', error);
     }
   };
 
@@ -454,7 +467,7 @@ export default function PresentationEditor() {
     }
   };
 
-  if (loading || !project) {
+  if (isLoading || !project) {
     return (
       <div className="h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
@@ -476,7 +489,7 @@ export default function PresentationEditor() {
         <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               className="text-gray-600 hover:text-gray-900 transition-colors"
               title="Back to Dashboard"
             >
@@ -490,6 +503,13 @@ export default function PresentationEditor() {
         
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setShowReorder(true)}
+              className="px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm font-medium flex items-center gap-2 text-gray-700"
+            >
+              <ArrowUpDown className="w-4 h-4" />
+              Reorder
+            </button>
+            <button
               onClick={() => setChatOpen(!chatOpen)}
               className="px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm font-medium flex items-center gap-2 text-gray-700"
             >
@@ -498,10 +518,10 @@ export default function PresentationEditor() {
             </button>
             <button
               onClick={handleExport}
-              disabled={isExporting}
+              disabled={exportProject.isPending}
               className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 text-white disabled:opacity-50"
             >
-              {isExporting ? (
+              {exportProject.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Exporting...
@@ -759,10 +779,34 @@ export default function PresentationEditor() {
                         {/* Feedback Section - key forces re-render when content or feedback changes */}
                         <div className="mt-6 pt-4 border-t border-gray-200">
                           <SectionFeedback
-                            key={`feedback-${section.id}-${feedbackCache[section.id]?.userFeedback || 'neutral'}`}
+                            key={`feedback-${section.id}`}
                             sectionId={section.id}
+                            projectId={parseInt(id)}
                             initialFeedback={feedbackCache[section.id]?.userFeedback}
                             onFeedbackChange={(newType) => handleFeedbackChange(section.id, newType)}
+                            historyButton={
+                              section.content && (
+                                <SectionRefinementHistory
+                                  sectionId={section.id}
+                                  isOpen={true}
+                                  onRestore={(updatedSection) => {
+                                    // Update cache with restored section content
+                                    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+                                      if (!old || !old.sections) return old;
+                                      return {
+                                        ...old,
+                                        sections: old.sections.map(s =>
+                                          s.id === section.id ? { ...s, ...updatedSection } : s
+                                        )
+                                      };
+                                    });
+                                  }}
+                                  onClose={() => {
+                                    // Handled by SectionFeedback toggle
+                                  }}
+                                />
+                              )
+                            }
                           />
                         </div>
                       </div>
@@ -800,6 +844,27 @@ export default function PresentationEditor() {
 
           {/* Chat Sidebar */}
           <ChatSidebar projectId={parseInt(id)} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+
+          {/* Reorder Sidebar */}
+          {showReorder && (
+            <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
+              <div className="flex items-center justify-between px-6 py-4 border-b">
+                <h2 className="text-lg font-bold">Reorder Slides</h2>
+                <button
+                  className="text-gray-400 hover:text-gray-700 text-2xl"
+                  onClick={() => setShowReorder(false)}
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                <SectionReorder
+                  sections={project.sections}
+                  onReorder={handleReorderSections}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
