@@ -1,3 +1,5 @@
+
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from prisma import Prisma
@@ -11,13 +13,54 @@ logger = logging.getLogger("uvicorn.error")
 
 # Pydantic Models
 class FeedbackRequest(BaseModel):
-    type: str  # "like" or "dislike"
+    type: str  # "LIKE" or "DISLIKE"
 
 class CommentRequest(BaseModel):
     comment: str
 
 class RegenerateFeedbackRequest(BaseModel):
     feedback: Optional[str] = None  # User's feedback on why they dislike it (optional - will fetch from comments if not provided)
+
+
+@router.get("/projects/{project_id}/comments")
+async def get_project_comments_batch(
+    project_id: int,
+    db: Prisma = Depends(database.get_db),
+    current_user = Depends(auth.get_current_user)
+):
+    """Get all comments for all sections in a project (batch request to reduce API calls)"""
+    logger.info(f"GET /feedback/projects/{project_id}/comments (batch)")
+
+    # Verify project exists and user has access
+    project = await db.project.find_unique(
+        where={"id": project_id},
+        include={
+            "sections": {
+                "include": {
+                    "comments": {
+                        "where": {"userId": current_user.id},
+                        "orderBy": {"createdAt": "desc"}
+                    }
+                }
+            }
+        }
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.userId != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # Build response: {sectionId: [comments]}
+    comments_map = {}
+    for section in project.sections:
+        comments_map[section.id] = [
+            {"id": c.id, "comment": c.comment, "createdAt": c.createdAt.isoformat()} for c in section.comments
+        ]
+
+    logger.info(f"Returned batch comments for {len(project.sections)} sections")
+    return comments_map
 
 
 @router.post("/sections/{section_id}")
@@ -43,8 +86,8 @@ async def add_feedback(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     # Validate feedback type
-    if request.type not in ["like", "dislike"]:
-        raise HTTPException(status_code=400, detail="Feedback type must be 'like' or 'dislike'")
+    if request.type not in ["LIKE", "DISLIKE"]:
+        raise HTTPException(status_code=400, detail="Feedback type must be 'LIKE' or 'DISLIKE'")
 
     try:
         # Use upsert to handle both create and update
@@ -102,7 +145,7 @@ async def get_project_feedback_batch(
     if project.userId != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Build response: {sectionId: {userFeedback: "like"/"dislike"/null}}
+    # Build response: {sectionId: {userFeedback: "LIKE"/"DISLIKE"/null}}
     feedback_map = {}
     for section in project.sections:
         # Each section now has feedback included
@@ -140,14 +183,14 @@ async def get_feedback(
     likes_count = await db.sectionfeedback.count(
         where={
             "sectionId": section_id,
-            "type": "like"
+            "type": "LIKE"
         }
     )
 
     dislikes_count = await db.sectionfeedback.count(
         where={
             "sectionId": section_id,
-            "type": "dislike"
+            "type": "DISLIKE"
         }
     )
 
@@ -219,24 +262,14 @@ async def regenerate_with_feedback(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     try:
-        # Get feedback text - either from request or from comments
-        feedback_text = None
-        if request and request.feedback:
-            feedback_text = request.feedback
-        else:
-            # Fetch from comments
-            comments = await db.sectioncomment.find_many(
-                where={
-                    "sectionId": section_id,
-                    "userId": current_user.id
-                },
-                order={"createdAt": "desc"}
-            )
-            if comments:
-                feedback_text = comments[0].comment
-
+        # Frontend always sends the user's typed feedback in the request body.
+        feedback_text = (request.feedback if request else "") or ""
+        feedback_text = feedback_text.strip()
         if not feedback_text:
-            raise HTTPException(status_code=400, detail="No feedback provided. Please add a comment explaining what needs improvement.")
+            raise HTTPException(
+                status_code=400,
+                detail="No feedback provided. Please add a comment explaining what needs improvement.",
+            )
 
         logger.info(f"Regenerating section {section_id} with feedback: {feedback_text[:50]}...")
 
@@ -247,26 +280,21 @@ async def regenerate_with_feedback(
             section.project.type
         )
 
-        # Save to refinement history
-        await db.refinementhistory.create(
-            data={
-                "sectionId": section_id,
-                "prompt": f"[FEEDBACK REGENERATION] {feedback_text}",
-                "previousContent": section.content or "",
-                "newContent": refined_content
-            }
-        )
+        # Only save snapshot if content actually changed
+        if section.content != refined_content:
+            await db.sectionsnapshot.create(
+                data={
+                    "sectionId": section_id,
+                    "title": section.title,
+                    "content": section.content or "",
+                    "changeType": f"feedback_regeneration: {feedback_text[:100]}"
+                }
+            )
 
         # Update section
-        update_data = {"content": refined_content}
-
-        # For DOCX: Regenerate HTML
-        if section.project.type == "docx":
-            update_data["htmlContent"] = markdown_utils.markdown_to_html(refined_content)
-
         updated_section = await db.documentsection.update(
             where={"id": section_id},
-            data=update_data
+            data={"content": refined_content}
         )
 
         # Update project timestamp
@@ -286,7 +314,7 @@ async def regenerate_with_feedback(
             }
         )
 
-        if user_feedback and user_feedback.type == "dislike":
+        if user_feedback and user_feedback.type == "DISLIKE":
             # Delete the dislike feedback
             await db.sectionfeedback.delete(where={"id": user_feedback.id})
             logger.info(f"Reset dislike feedback for section {section_id}")
@@ -303,7 +331,14 @@ async def regenerate_with_feedback(
             logger.info(f"Deleted {len(comments)} feedback comments for section {section_id}")
 
         logger.info(f"Section {section_id} regenerated based on feedback")
-        return updated_section
+        
+        # Return full section object for frontend cache consistency
+        return {
+            "id": updated_section.id,
+            "title": updated_section.title,
+            "content": updated_section.content,
+            "orderIndex": updated_section.orderIndex
+        }
 
     except Exception as e:
         logger.error(f"Failed to regenerate section: {e}")

@@ -1,303 +1,184 @@
-import { useState, useEffect } from 'react';
-import { ThumbsUp, ThumbsDown, Loader2, CheckCircle2 } from 'lucide-react';
-import api from '../api';
+import { useState, useEffect, useRef } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
+import { ThumbsUp, ThumbsDown } from 'lucide-react';
+import { useSectionFeedback, useSubmitFeedback, useRemoveFeedback } from '../hooks/useFeedback';
 
-export default function SectionFeedback({ sectionId, initialFeedback = null, onFeedbackChange = null }) {
-  const [userFeedback, setUserFeedback] = useState(initialFeedback); // "like", "dislike", or null
-  const [feedbackComment, setFeedbackComment] = useState('');
-  const [showCommentBox, setShowCommentBox] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [autoSaving, setAutoSaving] = useState(false);
-  const [autoSaveTimer, setAutoSaveTimer] = useState(null);
-  const [existingCommentId, setExistingCommentId] = useState(null);
+export default function SectionFeedback({
+    sectionId,
+    projectId,
+    cachedFeedback = null,
+    onFeedbackChange = null,
+    historyButton = null,
+}) {
+    // Only fetch per-section if no cached batch data was passed in.
+    const { data: feedbackData } = useSectionFeedback(sectionId, cachedFeedback === null);
+    const submitFeedback = useSubmitFeedback();
+    const removeFeedback = useRemoveFeedback();
 
-  useEffect(() => {
-    // Only load feedback if not provided via props
-    if (initialFeedback === null) {
-      loadFeedback();
-    } else {
-      setUserFeedback(initialFeedback);
-      // Show comment box and load existing comment if disliked
-      if (initialFeedback === 'dislike') {
-        setShowCommentBox(true);
-        loadComment();
-      } else {
-        // Reset comment box if feedback is not dislike
-        setShowCommentBox(false);
-        setFeedbackComment('');
-      }
-    }
-  }, [sectionId, initialFeedback]);
+    // Like is persisted to backend; dislike is local-only (used to gate regeneration).
+    const [isLiked, setIsLiked] = useState(false);
+    const [isDisliked, setIsDisliked] = useState(false);
+    const [localComment, setLocalComment] = useState('');
+    const [showCommentBox, setShowCommentBox] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
 
-  // Cleanup timer on unmount
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimer) {
-        clearTimeout(autoSaveTimer);
-      }
+    // Track the latest dislike state so the debounced callback uses fresh values.
+    const dislikedRef = useRef(false);
+    useEffect(() => { dislikedRef.current = isDisliked; }, [isDisliked]);
+
+    // Sync like state with whatever data source is available (props win).
+    useEffect(() => {
+        const fb = cachedFeedback ?? feedbackData;
+        setIsLiked(fb?.userFeedback === 'LIKE');
+    }, [cachedFeedback, feedbackData]);
+
+    const propagate = (type, comment) => {
+        if (onFeedbackChange) onFeedbackChange(type, comment);
     };
-  }, [autoSaveTimer]);
 
-  const loadComment = async () => {
-    try {
-      const comments = await api.get(`/feedback/sections/${sectionId}/comments`);
-      if (comments.data.length > 0) {
-        setFeedbackComment(comments.data[0].comment);
-        setExistingCommentId(comments.data[0].id);
-        setShowCommentBox(true);
-      }
-    } catch (error) {
-      console.error('Failed to load comment:', error);
-    }
-  };
+    const debouncedPropagate = useDebouncedCallback((comment) => {
+        // Only fire if the section is still in dislike state at fire time.
+        if (dislikedRef.current) propagate('DISLIKE', comment);
+    }, 400);
 
-  const loadFeedback = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(`/feedback/sections/${sectionId}`);
-      setUserFeedback(response.data.userFeedback);
+    const handleLike = async () => {
+        if (isLiked) {
+            setIsLiked(false);
+            propagate(null, null);
+            try {
+                await removeFeedback.mutateAsync({ sectionId, projectId });
+            } catch (err) {
+                setIsLiked(true);
+                console.error('Failed to remove like:', err);
+            }
+        } else {
+            setIsLiked(true);
+            setIsDisliked(false);
+            setShowCommentBox(false);
+            setLocalComment('');
+            propagate('LIKE', null);
+            try {
+                await submitFeedback.mutateAsync({ sectionId, type: 'LIKE', projectId });
+            } catch (err) {
+                setIsLiked(false);
+                console.error('Failed to submit like:', err);
+            }
+        }
+    };
 
-      // Load existing comment if user disliked
-      if (response.data.userFeedback === 'dislike') {
-        await loadComment();
-      }
-    } catch (error) {
-      console.error('Failed to load feedback:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    const handleDislike = () => {
+        if (isDisliked) {
+            setIsDisliked(false);
+            setShowCommentBox(false);
+            setLocalComment('');
+            propagate(null, null);
+        } else {
+            setIsDisliked(true);
+            setIsLiked(false);
+            setShowCommentBox(true);
+            setShowHistory(false);
+            propagate('DISLIKE', '');
+        }
+    };
 
-  const handleLike = async () => {
-    try {
-      if (userFeedback === 'like') {
-        // Clicking like again removes it
-        await api.delete(`/feedback/sections/${sectionId}`);
-        setUserFeedback(null);
-        if (onFeedbackChange) onFeedbackChange(null);
-      } else {
-        // Mark as liked (removes any existing feedback first)
-        await api.post(`/feedback/sections/${sectionId}`, { type: 'like' });
-        setUserFeedback('like');
+    const handleToggleHistory = () => {
+        setShowHistory((v) => !v);
+        if (!showHistory) setShowCommentBox(false);
+    };
+
+    const handleCommentChange = (e) => {
+        const value = e.target.value;
+        setLocalComment(value);
+        // Auto-propagate as user types so global Regenerate sees fresh feedback
+        // without requiring an explicit "Save" click.
+        debouncedPropagate(value.trim());
+    };
+
+    const handleCancelFeedback = () => {
+        setIsDisliked(false);
         setShowCommentBox(false);
-        setFeedbackComment('');
-        setExistingCommentId(null);
-        if (onFeedbackChange) onFeedbackChange('like');
+        setLocalComment('');
+        debouncedPropagate.cancel();
+        propagate(null, null);
+    };
 
-        // Delete any existing comment
-        if (existingCommentId) {
-          try {
-            await api.delete(`/feedback/sections/${sectionId}/comments/${existingCommentId}`);
-          } catch (err) {
-            console.log('No comment to delete');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to submit like:', error);
-      alert('Failed to update feedback');
-    }
-  };
+    return (
+        <div className="section-feedback">
+            <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleLike}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${isLiked
+                            ? 'bg-green-500 text-white hover:bg-green-600'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
+                            }`}
+                        title="Keep this section as-is (persisted)"
+                    >
+                        <ThumbsUp className="w-4 h-4" />
+                        <span className="text-sm font-medium">Like</span>
+                    </button>
 
-  const handleDislike = async () => {
-    try {
-      if (userFeedback === 'dislike') {
-        // Clicking dislike again removes it
-        await api.delete(`/feedback/sections/${sectionId}`);
-        setUserFeedback(null);
-        setShowCommentBox(false);
-        setFeedbackComment('');
-        if (onFeedbackChange) onFeedbackChange(null);
+                    <button
+                        onClick={handleDislike}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${isDisliked
+                            ? 'bg-red-500 text-white hover:bg-red-600'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
+                            }`}
+                        title="Mark for regeneration with feedback"
+                    >
+                        <ThumbsDown className="w-4 h-4" />
+                        <span className="text-sm font-medium">Dislike</span>
+                    </button>
 
-        // Delete the comment if we have the ID
-        if (existingCommentId) {
-          try {
-            await api.delete(`/feedback/sections/${sectionId}/comments/${existingCommentId}`);
-          } catch (err) {
-            console.log('Comment already deleted');
-          }
-        }
-        setExistingCommentId(null);
-      } else {
-        // Mark as disliked and show comment box
-        await api.post(`/feedback/sections/${sectionId}`, { type: 'dislike' });
-        setUserFeedback('dislike');
-        setShowCommentBox(true);
-        if (onFeedbackChange) onFeedbackChange('dislike');
-      }
-    } catch (error) {
-      console.error('Failed to submit dislike:', error);
-      alert('Failed to update feedback');
-    }
-  };
-
-  const saveCommentToBackend = async (commentText) => {
-    if (!commentText.trim()) {
-      return false;
-    }
-
-    // Only save if user has actually disliked the section
-    if (userFeedback !== 'dislike') {
-      console.log('Cannot save comment: section not disliked yet');
-      return false;
-    }
-
-    try {
-      // If we have an existing comment ID, delete it first
-      if (existingCommentId) {
-        try {
-          await api.delete(`/feedback/sections/${sectionId}/comments/${existingCommentId}`);
-        } catch (deleteError) {
-          // Comment might already be deleted, continue
-          console.log('Comment already deleted or not found');
-        }
-      }
-
-      // Create new comment
-      const response = await api.post(`/feedback/sections/${sectionId}/comments`, {
-        comment: commentText
-      });
-
-      // Store the new comment ID
-      if (response.data && response.data.id) {
-        setExistingCommentId(response.data.id);
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Failed to save comment:', error);
-      // Don't show error to user for auto-save failures
-      return false;
-    }
-  };
-
-  const handleSaveComment = async () => {
-    if (!feedbackComment.trim()) {
-      return;
-    }
-
-    const success = await saveCommentToBackend(feedbackComment);
-
-    if (success) {
-      // Show saved indicator
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    }
-  };
-
-  const handleCommentChange = (e) => {
-    const newComment = e.target.value;
-    setFeedbackComment(newComment);
-
-    // Reset saved state when user types
-    if (saved) setSaved(false);
-
-    // Clear existing timer
-    if (autoSaveTimer) {
-      clearTimeout(autoSaveTimer);
-    }
-
-    // Set new auto-save timer (1.5 seconds after user stops typing)
-    if (newComment.trim()) {
-      setAutoSaving(true);
-      const timer = setTimeout(async () => {
-        const success = await saveCommentToBackend(newComment);
-        setAutoSaving(false);
-        if (success) {
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2000);
-        }
-      }, 1500); // Auto-save after 1.5 seconds of inactivity
-
-      setAutoSaveTimer(timer);
-    } else {
-      setAutoSaving(false);
-    }
-  };
-
-  if (loading) {
-    return <div className="flex items-center gap-2 text-gray-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>;
-  }
-
-  return (
-    <div className="section-feedback">
-      {/* Feedback Buttons */}
-      <div className="flex items-center gap-3 mb-3">
-        {/* Like Button */}
-        <button
-          onClick={handleLike}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
-            userFeedback === 'like'
-              ? 'bg-green-500 text-white hover:bg-green-600'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
-          }`}
-          title="Keep this section as-is"
-        >
-          <ThumbsUp className="w-4 h-4" />
-          <span className="text-sm font-medium">Like</span>
-        </button>
-
-        {/* Dislike Button */}
-        <button
-          onClick={handleDislike}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
-            userFeedback === 'dislike'
-              ? 'bg-red-500 text-white hover:bg-red-600'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-300'
-          }`}
-          title="Mark for regeneration with feedback"
-        >
-          <ThumbsDown className="w-4 h-4" />
-          <span className="text-sm font-medium">Dislike</span>
-        </button>
-
-        {userFeedback && (
-          <span className="text-xs text-gray-500">
-            {userFeedback === 'like' ? '✓ Keeping this section' : '✓ Marked for regeneration'}
-          </span>
-        )}
-      </div>
-
-      {/* Feedback Comment Box (only shown when disliked) */}
-      {showCommentBox && (
-        <div className="p-4 bg-red-50 rounded-lg border border-red-200">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            What needs to be improved? <span className="text-red-500">*</span>
-          </label>
-          <textarea
-            value={feedbackComment}
-            onChange={handleCommentChange}
-            placeholder="e.g., Too technical, needs more examples, wrong tone..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-400 min-h-24 text-sm resize-none"
-          />
-          <div className="mt-3">
-            <div className="flex items-center gap-3">
-              {/* Auto-save status indicator */}
-              {autoSaving && (
-                <div className="flex items-center gap-2 text-blue-600">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-sm font-medium">Saving...</span>
+                    {(isLiked || isDisliked) && (
+                        <span className="text-xs text-gray-500">
+                            {isLiked
+                                ? '✓ Liked (saved)'
+                                : localComment.trim()
+                                    ? '✓ Marked for regeneration'
+                                    : 'Add feedback below'}
+                        </span>
+                    )}
                 </div>
-              )}
-              {saved && !autoSaving && (
-                <div className="flex items-center gap-2 text-green-600 animate-fade-in">
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span className="text-sm font-medium">Auto-saved</span>
-                </div>
-              )}
-              {!autoSaving && !saved && feedbackComment.trim() && (
-                <span className="text-xs text-gray-500">
-                  Type to auto-save...
-                </span>
-              )}
+
+                {historyButton && (
+                    <button
+                        onClick={handleToggleHistory}
+                        className="text-sm text-gray-600 hover:text-gray-800 underline"
+                    >
+                        {showHistory ? 'Hide History' : 'View History'}
+                    </button>
+                )}
             </div>
-            <p className="text-xs text-gray-600 mt-2">
-              💡 Click "Regenerate" to apply feedback
-            </p>
-          </div>
+
+            {showCommentBox && (
+                <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        What needs to be improved? <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                        value={localComment}
+                        onChange={handleCommentChange}
+                        placeholder="e.g., Too technical, needs more examples, wrong tone..."
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-400 min-h-24 text-sm resize-none"
+                    />
+                    <div className="mt-3 flex items-center justify-between">
+                        <button
+                            onClick={handleCancelFeedback}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm font-medium transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <p className="text-xs text-gray-600">
+                            💡 Click global Regenerate when ready
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {showHistory && historyButton && (
+                <div className="mt-3">{historyButton}</div>
+            )}
         </div>
-      )}
-    </div>
-  );
+    );
 }

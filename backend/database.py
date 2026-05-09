@@ -15,7 +15,7 @@ prisma_client = Prisma()
 
 # Connection health tracking
 last_health_check = None
-health_check_interval = timedelta(minutes=5)
+health_check_interval = timedelta(minutes=30)
 connection_lock = asyncio.Lock()
 
 async def ensure_connection():

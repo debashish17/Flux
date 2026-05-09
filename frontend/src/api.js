@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { supabase } from './supabase';
 
 const USE_MOCK = false;
 
@@ -114,16 +115,17 @@ const mockAdapter = async (config) => {
 };
 
 const api = axios.create({
-    baseURL: 'http://localhost:8000',
+    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
     // Use mock adapter if enabled, otherwise default (undefined means default)
-    adapter: USE_MOCK ? mockAdapter : undefined
+    adapter: USE_MOCK ? mockAdapter : undefined,
+    timeout: 120000 // 2 minute default timeout (AI operations can be slow)
 });
 
 api.interceptors.request.use(
-    (config) => {
-        const token = localStorage.getItem('token');
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+    async (config) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+            config.headers.Authorization = `Bearer ${session.access_token}`;
         }
         return config;
     },
@@ -135,13 +137,10 @@ api.interceptors.request.use(
 // Response interceptor to handle authentication errors
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
-        // If we get a 401 Unauthorized, clear token and cached data, then redirect to login
+    async (error) => {
+        // If we get a 401 Unauthorized, sign out and redirect to login
         if (error.response && error.response.status === 401) {
-            localStorage.removeItem('token');
-            sessionStorage.removeItem('dashboard_projects');
-            sessionStorage.removeItem('dashboard_cache_timestamp');
-            sessionStorage.removeItem('refresh_dashboard');
+            await supabase.auth.signOut();
             window.location.href = '/login';
         }
         return Promise.reject(error);

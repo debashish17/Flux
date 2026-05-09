@@ -1,64 +1,39 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api';
+import { supabase } from '../supabase';
 
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLogin, setIsLogin] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setSubmitting(true);
         try {
-            const endpoint = isLogin ? '/token' : '/signup';
-            const payload = isLogin
-                ? new URLSearchParams({ username: email, password })
-                : { email, password };
+            const { data, error } = isLogin
+                ? await supabase.auth.signInWithPassword({ email, password })
+                : await supabase.auth.signUp({ email, password });
 
-            console.log('Attempting login to:', endpoint);
-            const response = await api.post(endpoint, payload, {
-                headers: isLogin ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}
-            });
+            if (error) {
+                alert(error.message || 'Authentication failed');
+                return;
+            }
 
-            console.log('Login Response:', response);
-
-            if (response.data && response.data.access_token) {
-                localStorage.setItem('token', response.data.access_token);
-                // Clear any cached data from previous user
-                sessionStorage.removeItem('dashboard_projects');
-                sessionStorage.removeItem('dashboard_cache_timestamp');
-                sessionStorage.removeItem('refresh_dashboard');
-                navigate('/');
+            if (data?.session) {
+                navigate('/dashboard');
             } else {
-                console.error('Invalid response structure:', response);
-                alert('Login failed: Invalid server response');
+                // Sign-up succeeded but no session — happens if email confirmation is on.
+                alert('Account created. Please check your email to confirm before signing in.');
+                setIsLogin(true);
             }
-        } catch (error) {
-            console.error('Login Error:', error);
-
-            // Parse error response for specific error messages
-            let errorMessage = 'Authentication failed';
-
-            if (error.response) {
-                // Server responded with error
-                if (error.response.status === 401) {
-                    errorMessage = isLogin
-                        ? 'Invalid email or password'
-                        : 'Email already registered';
-                } else if (error.response.status === 422) {
-                    errorMessage = 'Please check your email and password format';
-                } else if (error.response.data?.detail) {
-                    errorMessage = error.response.data.detail;
-                } else if (error.response.status === 500) {
-                    errorMessage = 'Server error. Please try again later';
-                }
-            } else if (error.request) {
-                // Network error
-                errorMessage = 'Network error. Check your connection';
-            }
-
-            alert(errorMessage);
+        } catch (err) {
+            console.error('Auth error:', err);
+            alert('Network error. Check your connection.');
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -67,8 +42,23 @@ export default function Login() {
             <div className="w-full max-w-md px-6">
                 {/* Logo/Title */}
                 <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Flux</h1>
-                    <p className="text-gray-600">{isLogin ? 'Welcome back' : 'Create your account'}</p>
+                    <h1 className="inline-block relative text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
+                        flux
+                        <span
+                            aria-hidden="true"
+                            className="absolute"
+                            style={{
+                                right: '0.05em',
+                                bottom: '-0.18em',
+                                width: '0.42em',
+                                height: '0.22em',
+                                borderBottom: '2.4px solid currentColor',
+                                borderBottomLeftRadius: '999px',
+                                borderBottomRightRadius: '999px',
+                            }}
+                        />
+                    </h1>
+                    <p className="text-gray-600 mt-3">{isLogin ? 'Welcome back' : 'Create your account'}</p>
                 </div>
 
                 {/* Form Card */}
@@ -98,9 +88,10 @@ export default function Login() {
                         </div>
                         <button
                             type="submit"
-                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                            disabled={submitting}
+                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors"
                         >
-                            {isLogin ? 'Sign In' : 'Create Account'}
+                            {submitting ? 'Please wait…' : (isLogin ? 'Sign In' : 'Create Account')}
                         </button>
                     </form>
                     <div className="mt-6 text-center">
