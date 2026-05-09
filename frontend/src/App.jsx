@@ -8,11 +8,35 @@ import ProjectSetup from './pages/ProjectSetup';
 import DocumentEditor from './pages/DocumentEditor';
 import PresentationEditor from './pages/PresentationEditor';
 import api from './api';
+import { supabase } from './supabase';
 import { Loader2 } from 'lucide-react';
 
+function useSession() {
+  const [session, setSession] = useState(undefined); // undefined = loading
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  return session;
+}
+
+function FullScreenLoader() {
+  return (
+    <div className="flex items-center justify-center h-screen">
+      <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+    </div>
+  );
+}
+
 function PrivateRoute({ children }) {
-  const token = localStorage.getItem('token');
-  return token ? children : <Navigate to="/login" />;
+  const session = useSession();
+  if (session === undefined) return <FullScreenLoader />;
+  return session ? children : <Navigate to="/login" />;
 }
 
 function EditorRouter() {
@@ -35,13 +59,7 @@ function EditorRouter() {
     fetchProjectType();
   }, [id]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+  if (loading) return <FullScreenLoader />;
 
   if (projectType === 'pptx') {
     return <PresentationEditor />;
@@ -53,13 +71,15 @@ function EditorRouter() {
 }
 
 function App() {
-  const token = localStorage.getItem('token');
+  const session = useSession();
+
+  if (session === undefined) return <FullScreenLoader />;
 
   return (
     <Router>
       <Routes>
-        <Route path="/" element={token ? <Navigate to="/dashboard" /> : <Landing />} />
-        <Route path="/login" element={token ? <Navigate to="/dashboard" /> : <Login />} />
+        <Route path="/" element={session ? <Navigate to="/dashboard" /> : <Landing />} />
+        <Route path="/login" element={session ? <Navigate to="/dashboard" /> : <Login />} />
         <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
         <Route path="/create" element={<PrivateRoute><ProjectSetup /></PrivateRoute>} />
         <Route path="/editor/:id" element={<PrivateRoute><EditorRouter /></PrivateRoute>} />

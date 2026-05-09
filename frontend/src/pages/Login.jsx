@@ -1,58 +1,39 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api';
+import { supabase } from '../supabase';
 
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLogin, setIsLogin] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setSubmitting(true);
         try {
-            const endpoint = isLogin ? '/token' : '/signup';
-            const payload = isLogin
-                ? new URLSearchParams({ username: email, password })
-                : { email, password };
+            const { data, error } = isLogin
+                ? await supabase.auth.signInWithPassword({ email, password })
+                : await supabase.auth.signUp({ email, password });
 
-            const response = await api.post(endpoint, payload, {
-                headers: isLogin ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}
-            });
+            if (error) {
+                alert(error.message || 'Authentication failed');
+                return;
+            }
 
-            if (response.data && response.data.access_token) {
-                localStorage.setItem('token', response.data.access_token);
-                // React Query will fetch fresh data on mount
+            if (data?.session) {
                 navigate('/dashboard');
             } else {
-                console.error('Invalid response structure:', response);
-                alert('Login failed: Invalid server response');
+                // Sign-up succeeded but no session — happens if email confirmation is on.
+                alert('Account created. Please check your email to confirm before signing in.');
+                setIsLogin(true);
             }
-        } catch (error) {
-            console.error('Login Error:', error);
-
-            // Parse error response for specific error messages
-            let errorMessage = 'Authentication failed';
-
-            if (error.response) {
-                // Server responded with error
-                if (error.response.status === 401) {
-                    errorMessage = isLogin
-                        ? 'Invalid email or password'
-                        : 'Email already registered';
-                } else if (error.response.status === 422) {
-                    errorMessage = 'Please check your email and password format';
-                } else if (error.response.data?.detail) {
-                    errorMessage = error.response.data.detail;
-                } else if (error.response.status === 500) {
-                    errorMessage = 'Server error. Please try again later';
-                }
-            } else if (error.request) {
-                // Network error
-                errorMessage = 'Network error. Check your connection';
-            }
-
-            alert(errorMessage);
+        } catch (err) {
+            console.error('Auth error:', err);
+            alert('Network error. Check your connection.');
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -92,9 +73,10 @@ export default function Login() {
                         </div>
                         <button
                             type="submit"
-                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+                            disabled={submitting}
+                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors"
                         >
-                            {isLogin ? 'Sign In' : 'Create Account'}
+                            {submitting ? 'Please wait…' : (isLogin ? 'Sign In' : 'Create Account')}
                         </button>
                     </form>
                     <div className="mt-6 text-center">

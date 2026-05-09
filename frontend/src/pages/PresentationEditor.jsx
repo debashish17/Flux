@@ -8,8 +8,13 @@ import ChatSidebar from '../components/ChatSidebar';
 import SectionFeedback from '../components/SectionFeedback';
 import SectionRefinementHistory from '../components/SectionRefinementHistory';
 import SectionReorder from '../components/SectionReorder';
+import SlideBlockRenderer from '../components/SlideBlockRenderer';
+import {
+  parseSlideContent as parseSlideV1,
+  serializeSlideContent as serializeSlideV1,
+} from '../utils/slideContent';
 import { errorToast, successToast } from '../utils/toast';
-import { useProject } from '../hooks/useProject';
+import { useProject, useProjectFeedback } from '../hooks/useProject';
 import { useUpdateSection } from '../hooks/useSections';
 import { useGenerateSection, useRegenerateWithFeedback } from '../hooks/useGeneration';
 import { useExportProject } from '../hooks/useExport';
@@ -22,6 +27,7 @@ export default function PresentationEditor() {
 
   // React Query hooks
   const { data: project, isLoading } = useProject(id);
+  const { data: projectFeedback } = useProjectFeedback(id);
   const updateSection = useUpdateSection();
   const generateSectionMutation = useGenerateSection();
   const regenerateWithFeedback = useRegenerateWithFeedback();
@@ -50,6 +56,11 @@ export default function PresentationEditor() {
     }, 1000), // Wait 1 second after last edit
     [id]
   );
+
+  // Seed local feedbackCache from the project-level batch (1 API call instead of N)
+  useEffect(() => {
+    if (projectFeedback) setFeedbackCache(projectFeedback);
+  }, [projectFeedback]);
 
   // Auto-generate content for empty sections on mount
   useEffect(() => {
@@ -162,38 +173,43 @@ export default function PresentationEditor() {
     }
   }, []);
 
+  // Adapter layer: handlers below work with a flat
+  // { title, bullets[], imageSuggestion } shape for backward compat.
+  // Internally we read/write the v1 block schema. A slide may have many
+  // block types; the bullet handlers operate on the FIRST bullets block
+  // (creating one if missing) — matching today's editor UX.
   const parseSlideContent = (content) => {
-    if (!content) return { title: '', bullets: [], imageSuggestion: '' };
-    const result = { title: '', bullets: [], imageSuggestion: '' };
-    const lines = content.split('\n');
-    let inContentSection = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('TITLE:')) {
-        result.title = trimmed.replace('TITLE:', '').trim();
-      } else if (trimmed.startsWith('CONTENT:')) {
-        inContentSection = true;
-      } else if (trimmed.startsWith('IMAGE_SUGGESTION:')) {
-        result.imageSuggestion = trimmed.replace('IMAGE_SUGGESTION:', '').trim();
-        inContentSection = false;
-      } else if (inContentSection && trimmed) {
-        const bullet = trimmed.replace(/^[•\-*]\s*/, '');
-        if (bullet) result.bullets.push(bullet);
-      }
-    }
-    return result;
+    const v1 = parseSlideV1(content);
+    const firstBullets = v1.blocks.find(b => b.type === 'bullets');
+    return {
+      title: v1.title,
+      bullets: firstBullets ? [...firstBullets.items] : [],
+      imageSuggestion: v1.image_suggestion || '',
+      _v1: v1,  // preserve full block list for the renderer
+    };
   };
 
   const reconstructContent = (parsed) => {
-    let content = `TITLE: ${parsed.title}\nCONTENT:\n`;
-    parsed.bullets.forEach(bullet => {
-      content += `• ${bullet}\n`;
-    });
-    if (parsed.imageSuggestion) {
-      content += `IMAGE_SUGGESTION: ${parsed.imageSuggestion}`;
+    // Start from the original v1 (preserves non-bullet blocks)
+    const base = parsed._v1 || { title: '', blocks: [], image_suggestion: null };
+    const blocks = [...(base.blocks || [])];
+    const idx = blocks.findIndex(b => b.type === 'bullets');
+    const newBulletsBlock = parsed.bullets.length
+      ? { type: 'bullets', items: parsed.bullets }
+      : null;
+
+    if (idx >= 0) {
+      if (newBulletsBlock) blocks[idx] = newBulletsBlock;
+      else blocks.splice(idx, 1);
+    } else if (newBulletsBlock) {
+      blocks.unshift(newBulletsBlock);
     }
-    return content;
+
+    return serializeSlideV1({
+      title: parsed.title,
+      blocks,
+      image_suggestion: parsed.imageSuggestion || null,
+    });
   };
 
   // Memoize parsed slides to avoid re-parsing on every render - significant performance improvement
@@ -298,6 +314,32 @@ export default function PresentationEditor() {
     updateSection.mutate({ sectionId, updates: { content: updatedContent }, projectId: parseInt(id) });
   };
 
+  // Replace one block in a slide's v1 content (or remove it when newBlock is null).
+  const handleBlockChange = (sectionId, blockIdx, newBlock) => {
+    if (!project) return;
+    const section = project.sections.find(s => s.id === sectionId);
+    if (!section) return;
+    const v1 = parseSlideV1(section.content);
+    const blocks = [...v1.blocks];
+    if (newBlock === null) blocks.splice(blockIdx, 1);
+    else if (blockIdx >= 0 && blockIdx < blocks.length) blocks[blockIdx] = newBlock;
+    else return;
+
+    const updatedContent = serializeSlideV1({ ...v1, blocks });
+
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
+          s.id === sectionId ? { ...s, content: updatedContent } : s
+        ),
+      };
+    });
+
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
+  };
+
   const handleImageEdit = (sectionId, newImage) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
@@ -364,67 +406,75 @@ export default function PresentationEditor() {
     }
   };
 
-  const handleFeedbackChange = (sectionId, newFeedbackType) => {
+  const handleFeedbackChange = (sectionId, newFeedbackType, comment = null) => {
     setFeedbackCache(prev => ({
       ...prev,
-      [sectionId]: { userFeedback: newFeedbackType }
+      [sectionId]: {
+        ...(prev[sectionId] || {}),
+        userFeedback: newFeedbackType,
+        // Preserve existing comment unless caller passed one explicitly (or cleared feedback)
+        comment: newFeedbackType ? (comment ?? prev[sectionId]?.comment ?? '') : '',
+      }
     }));
   };
 
   const handleGenerate = async (sectionId) => {
-    // Check cached feedback first (avoid extra API call)
-    const cachedFeedback = feedbackCache[sectionId]?.userFeedback;
+    const slot = feedbackCache[sectionId] || {};
+    const cachedFeedback = slot.userFeedback;
+    const feedbackComment = (slot.comment || '').trim();
 
-    // If user liked the slide, show warning and prevent regeneration
     if (cachedFeedback === 'LIKE') {
       const confirmRegenerate = window.confirm(
         "You marked this slide as 'liked'. Regenerating will create new content. Are you sure you want to continue?"
       );
-      if (!confirmRegenerate) {
-        return; // User cancelled, don't regenerate
-      }
+      if (!confirmRegenerate) return;
+    }
+
+    // Disliked but no comment yet — don't fire a doomed feedback regeneration.
+    if (cachedFeedback === 'DISLIKE' && !feedbackComment) {
+      setAutoGenNotice('Add feedback before regenerating, or undo Dislike to do a plain regenerate.');
+      setTimeout(() => setAutoGenNotice(''), 4000);
+      return;
     }
 
     setGeneratingSlides(prev => new Set(prev).add(sectionId));
 
-    const isRegeneratingWithFeedback = cachedFeedback === 'DISLIKE';
+    const isRegeneratingWithFeedback = cachedFeedback === 'DISLIKE' && !!feedbackComment;
 
     try {
       if (isRegeneratingWithFeedback) {
-        // Show notice that we're applying feedback
-        setAutoGenNotice("Applying your feedback...");
+        setAutoGenNotice('Applying your feedback...');
 
-        // Regenerate with feedback using the hook
         await regenerateWithFeedback.mutateAsync({
           sectionId,
-          feedback: '', // Backend will fetch comments from database
-          projectId: parseInt(id)
+          feedback: feedbackComment,
+          projectId: parseInt(id),
         });
 
-        // Clear feedback cache - backend deletes the feedback record
+        // Reset slot — backend has already deleted the dislike record
         setFeedbackCache(prev => ({
           ...prev,
-          [sectionId]: { userFeedback: null }
+          [sectionId]: { userFeedback: null, comment: '' },
         }));
 
-        setAutoGenNotice("Slide regenerated with your feedback!");
-        setTimeout(() => setAutoGenNotice(""), 3000);
+        setAutoGenNotice('Slide regenerated with your feedback!');
+        setTimeout(() => setAutoGenNotice(''), 3000);
       } else {
-        // No dislike feedback, do regular generation
         await generateSectionMutation.mutateAsync({
           sectionId,
-          projectId: parseInt(id)
+          projectId: parseInt(id),
         });
       }
     } catch (error) {
       console.error('Generation failed', error);
-      setAutoGenNotice("Failed to regenerate slide");
-      setTimeout(() => setAutoGenNotice(""), 3000);
+      const detail = error?.response?.data?.detail;
+      setAutoGenNotice(detail || 'Failed to regenerate slide');
+      setTimeout(() => setAutoGenNotice(''), 4000);
     } finally {
       setGeneratingSlides(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sectionId);
-        return newSet;
+        const next = new Set(prev);
+        next.delete(sectionId);
+        return next;
       });
     }
   };
@@ -681,61 +731,81 @@ export default function PresentationEditor() {
                           </div>
                           
                           <div className="flex gap-8">
-                            <div className="flex-1">
-                              {parsed.bullets.length > 0 ? (
-                                <ul className="space-y-4">
-                                  {parsed.bullets.map((bullet, bulletIdx) => (
-                                    <li key={bulletIdx} className="flex items-start gap-3">
-                                      <span className="text-indigo-600 font-bold mt-1 text-xl">•</span>
-                                      {editingBullet === `${section.id}-${bulletIdx}` ? (
-                                        <div className="flex-1 flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={tempBullet}
-                                            onChange={(e) => setTempBullet(e.target.value)}
-                                            onBlur={() => saveBulletEdit(section.id, bulletIdx, true)}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                saveBulletEdit(section.id, bulletIdx, true);
-                                              }
-                                              if (e.key === 'Escape') {
-                                                setEditingBullet(null);
-                                                setTempBullet("");
-                                              }
-                                            }}
-                                            className="flex-1 text-lg text-gray-700 border-b border-indigo-500 focus:outline-none bg-transparent"
-                                            autoFocus
-                                          />
-                                          <button
-                                            onClick={() => saveBulletEdit(section.id, bulletIdx, true)}
-                                            className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                                          >
-                                            <Check className="w-4 h-4" />
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <span 
-                                          className="flex-1 text-lg text-gray-700 leading-relaxed cursor-text hover:bg-gray-50 px-2 py-1 -mx-2 rounded transition-colors"
-                                          onClick={() => startBulletEdit(section.id, bulletIdx, bullet)}
+                            <div className="flex-1 space-y-6">
+                              {parsed._v1 && parsed._v1.blocks.length > 0 ? (
+                                parsed._v1.blocks.map((block, blockIdx) => (
+                                  <div key={`${section.id}-${blockIdx}-${block.type}`} className="group relative">
+                                  <SlideBlockRenderer
+                                    block={block}
+                                    onChange={(updated) => handleBlockChange(section.id, blockIdx, updated)}
+                                    onDelete={() => handleBlockChange(section.id, blockIdx, null)}
+                                    bulletsRender={(b) => (
+                                      <div>
+                                        <ul className="space-y-4">
+                                          {b.items.map((bullet, bulletIdx) => (
+                                            <li key={bulletIdx} className="flex items-start gap-3">
+                                              <span className="text-indigo-600 font-bold mt-1 text-xl">•</span>
+                                              {editingBullet === `${section.id}-${bulletIdx}` ? (
+                                                <div className="flex-1 flex items-center gap-2">
+                                                  <input
+                                                    type="text"
+                                                    value={tempBullet}
+                                                    onChange={(e) => setTempBullet(e.target.value)}
+                                                    onBlur={() => saveBulletEdit(section.id, bulletIdx, true)}
+                                                    onKeyDown={(e) => {
+                                                      if (e.key === 'Enter') {
+                                                        saveBulletEdit(section.id, bulletIdx, true);
+                                                      }
+                                                      if (e.key === 'Escape') {
+                                                        setEditingBullet(null);
+                                                        setTempBullet("");
+                                                      }
+                                                    }}
+                                                    className="flex-1 text-lg text-gray-700 border-b border-indigo-500 focus:outline-none bg-transparent"
+                                                    autoFocus
+                                                  />
+                                                  <button
+                                                    onClick={() => saveBulletEdit(section.id, bulletIdx, true)}
+                                                    className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                                                  >
+                                                    <Check className="w-4 h-4" />
+                                                  </button>
+                                                </div>
+                                              ) : (
+                                                <span
+                                                  className="flex-1 text-lg text-gray-700 leading-relaxed cursor-text hover:bg-gray-50 px-2 py-1 -mx-2 rounded transition-colors"
+                                                  onClick={() => startBulletEdit(section.id, bulletIdx, bullet)}
+                                                >
+                                                  {bullet}
+                                                </span>
+                                              )}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                        <button
+                                          onClick={() => handleBulletAdd(section.id)}
+                                          className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
                                         >
-                                          {bullet}
-                                        </span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
+                                          <span className="text-lg">+</span>
+                                          Add bullet point
+                                        </button>
+                                      </div>
+                                    )}
+                                  />
+                                  </div>
+                                ))
                               ) : (
-                                <p className="text-gray-400">No content available</p>
+                                <div>
+                                  <p className="text-gray-400">No content available</p>
+                                  <button
+                                    onClick={() => handleBulletAdd(section.id)}
+                                    className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
+                                  >
+                                    <span className="text-lg">+</span>
+                                    Add bullet point
+                                  </button>
+                                </div>
                               )}
-                              
-                              {/* Add Bullet Button */}
-                              <button
-                                onClick={() => handleBulletAdd(section.id)}
-                                className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
-                              >
-                                <span className="text-lg">+</span>
-                                Add bullet point
-                              </button>
                             </div>
                             
                             {/* Editable Image Suggestion */}
@@ -782,7 +852,7 @@ export default function PresentationEditor() {
                             key={`feedback-${section.id}`}
                             sectionId={section.id}
                             projectId={parseInt(id)}
-                            initialFeedback={feedbackCache[section.id]?.userFeedback}
+                            cachedFeedback={feedbackCache[section.id] ?? { userFeedback: null, likes: 0, dislikes: 0 }}
                             onFeedbackChange={(newType) => handleFeedbackChange(section.id, newType)}
                             historyButton={
                               section.content && (

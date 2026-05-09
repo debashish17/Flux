@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { supabase } from './supabase';
 
 const USE_MOCK = false;
 
@@ -121,10 +122,10 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(
-    (config) => {
-        const token = localStorage.getItem('token');
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+    async (config) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+            config.headers.Authorization = `Bearer ${session.access_token}`;
         }
         return config;
     },
@@ -136,11 +137,10 @@ api.interceptors.request.use(
 // Response interceptor to handle authentication errors
 api.interceptors.response.use(
     (response) => response,
-    (error) => {
-        // If we get a 401 Unauthorized, clear token and redirect to login
-        // React Query cache will be cleared by the logout handler
+    async (error) => {
+        // If we get a 401 Unauthorized, sign out and redirect to login
         if (error.response && error.response.status === 401) {
-            localStorage.removeItem('token');
+            await supabase.auth.signOut();
             window.location.href = '/login';
         }
         return Promise.reject(error);

@@ -83,11 +83,9 @@ export const useRegenerateWithFeedback = () => {
         };
       });
 
-      // Clear feedback and comments for this section
-      queryClient.setQueryData(['sections', variables.sectionId, 'feedback'], null);
-      queryClient.setQueryData(['sections', variables.sectionId, 'comments'], []);
-      await queryClient.refetchQueries({ queryKey: ['sections', variables.sectionId, 'feedback'] });
-      await queryClient.refetchQueries({ queryKey: ['sections', variables.sectionId, 'comments'] });
+      // Invalidate feedback queries (consistent approach)
+      queryClient.invalidateQueries({ queryKey: ['sections', variables.sectionId, 'feedback'] });
+      queryClient.invalidateQueries({ queryKey: ['sections', variables.sectionId, 'comments'] });
     },
     onError: (err) => {
       console.error('Regenerate with feedback failed:', err);

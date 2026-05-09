@@ -384,20 +384,190 @@ def parse_slide_content(content: str) -> dict:
 
     return result
 
+# ---------- v1 block renderers for PPTX ----------
+
+def _add_bullet_char(p):
+    """Force python-pptx to render a • bullet on a paragraph."""
+    from pptx.oxml.xmlchemy import OxmlElement
+    pPr = p._element.get_or_add_pPr()
+    bu_none = pPr.find('{http://schemas.openxmlformats.org/drawingml/2006/main}buNone')
+    if bu_none is not None:
+        pPr.remove(bu_none)
+    buChar = OxmlElement('a:buChar')
+    buChar.set('char', '•')
+    pPr.append(buChar)
+
+
+def _render_bullets_pptx(slide, items, left, top, width, height):
+    box = slide.shapes.add_textbox(left, top, width, height)
+    tf = box.text_frame
+    tf.word_wrap = True
+    items = items or []
+    for i, b in enumerate(items):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.text = str(b)
+        p.level = 0
+        _add_bullet_char(p)
+        p.font.size = Pt(18)
+        p.font.name = 'Calibri'
+        p.font.color.rgb = RGBColor(55, 65, 81)
+        p.space_before = Pt(8)
+
+
+def _render_stats_pptx(slide, items, left, top, width, height):
+    """Row of N stat cards (textboxes) with big number + label + sublabel."""
+    items = items or []
+    n = max(1, len(items))
+    gap = Inches(0.15)
+    card_w = Inches((width.inches - gap.inches * (n - 1)) / n)
+    for i, s in enumerate(items):
+        x = Inches(left.inches + i * (card_w.inches + gap.inches))
+        box = slide.shapes.add_textbox(x, top, card_w, height)
+        tf = box.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = 1  # middle
+
+        # Big value
+        p_val = tf.paragraphs[0]
+        p_val.text = str(s.get('value', ''))
+        p_val.alignment = 2  # center
+        p_val.font.size = Pt(36)
+        p_val.font.bold = True
+        p_val.font.name = 'Calibri'
+        p_val.font.color.rgb = RGBColor(67, 56, 202)  # indigo-700
+
+        # Label
+        p_lab = tf.add_paragraph()
+        p_lab.text = str(s.get('label', ''))
+        p_lab.alignment = 2
+        p_lab.font.size = Pt(12)
+        p_lab.font.bold = True
+        p_lab.font.name = 'Calibri'
+        p_lab.font.color.rgb = RGBColor(31, 41, 55)
+        p_lab.space_before = Pt(4)
+
+        # Optional sublabel
+        sub = s.get('sublabel')
+        if sub:
+            p_sub = tf.add_paragraph()
+            p_sub.text = str(sub)
+            p_sub.alignment = 2
+            p_sub.font.size = Pt(9)
+            p_sub.font.name = 'Calibri'
+            p_sub.font.color.rgb = RGBColor(107, 114, 128)
+
+        # Card border
+        line = box.line
+        line.color.rgb = RGBColor(199, 210, 254)  # indigo-100
+        line.width = Pt(1)
+
+
+def _render_table_pptx(slide, headers, rows, left, top, width, height):
+    """Native python-pptx table."""
+    headers = headers or []
+    rows = rows or []
+    if not headers or not rows:
+        return
+    n_cols = len(headers)
+    n_rows = len(rows) + 1  # + header row
+    table_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
+    table = table_shape.table
+
+    # Header row
+    for ci, h in enumerate(headers):
+        cell = table.cell(0, ci)
+        cell.text = str(h)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(243, 244, 246)  # gray-50
+        for p in cell.text_frame.paragraphs:
+            p.font.size = Pt(11)
+            p.font.bold = True
+            p.font.name = 'Calibri'
+            p.font.color.rgb = RGBColor(31, 41, 55)
+
+    # Data rows
+    for ri, row in enumerate(rows, start=1):
+        for ci in range(n_cols):
+            cell = table.cell(ri, ci)
+            val = row[ci] if ci < len(row) else ''
+            cell.text = str(val)
+            for p in cell.text_frame.paragraphs:
+                p.font.size = Pt(10)
+                p.font.name = 'Calibri'
+                p.font.color.rgb = RGBColor(55, 65, 81)
+
+
+def _render_quote_pptx(slide, text, attribution, left, top, width, height):
+    box = slide.shapes.add_textbox(left, top, width, height)
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = 1  # middle
+
+    p = tf.paragraphs[0]
+    p.text = f'"{text}"'
+    p.font.size = Pt(20)
+    p.font.italic = True
+    p.font.name = 'Calibri'
+    p.font.color.rgb = RGBColor(31, 41, 55)
+
+    if attribution:
+        p2 = tf.add_paragraph()
+        p2.text = f'— {attribution}'
+        p2.font.size = Pt(12)
+        p2.font.name = 'Calibri'
+        p2.font.color.rgb = RGBColor(107, 114, 128)
+        p2.space_before = Pt(8)
+
+    # Left accent bar via the textbox border (approximation)
+    line = box.line
+    line.color.rgb = RGBColor(245, 158, 11)  # amber-500
+    line.width = Pt(2)
+
+
+def _render_block_pptx(slide, block, left, top, width, height):
+    t = (block or {}).get('type')
+    if t == 'bullets':
+        _render_bullets_pptx(slide, block.get('items') or [], left, top, width, height)
+    elif t == 'stats':
+        _render_stats_pptx(slide, block.get('items') or [], left, top, width, height)
+    elif t == 'table':
+        _render_table_pptx(slide, block.get('headers') or [], block.get('rows') or [], left, top, width, height)
+    elif t == 'quote':
+        _render_quote_pptx(slide, block.get('text', ''), block.get('attribution'), left, top, width, height)
+
+
+def _render_image_placeholder(slide, suggestion):
+    """Right-column image suggestion box (matches editor)."""
+    box = slide.shapes.add_textbox(Inches(6), Inches(1.5), Inches(3.5), Inches(3.5))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = 1
+    tf.text = f"📷 Image:\n{suggestion}"
+    p = tf.paragraphs[0]
+    p.font.size = Pt(12)
+    p.font.italic = True
+    p.font.color.rgb = RGBColor(107, 114, 128)
+    p.alignment = 1
+    line = box.line
+    line.color.rgb = RGBColor(200, 200, 200)
+    line.width = Pt(1)
+
+
 def create_pptx(project) -> io.BytesIO:
+    import slide_blocks as _sb
+
     prs = Presentation()
 
-    # Set slide size to widescreen (16:9)
+    # 16:9 widescreen
     prs.slide_width = Inches(10)
     prs.slide_height = Inches(5.625)
 
-    # Title Slide
+    # ---- Title slide
     title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
     title = slide.shapes.title
     subtitle = slide.placeholders[1]
 
-    # Format title
     title.text = project.title
     for paragraph in title.text_frame.paragraphs:
         for run in paragraph.runs:
@@ -411,142 +581,44 @@ def create_pptx(project) -> io.BytesIO:
             run.font.size = Pt(20)
             run.font.color.rgb = RGBColor(100, 100, 100)
 
-    # Content Slides
+    # ---- Content slides
     for section in sorted(project.sections, key=lambda x: x.orderIndex):
-        # Use blank layout for more control
-        blank_layout = prs.slide_layouts[6]  # Blank layout
-        slide = prs.slides.add_slide(blank_layout)
+        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        parsed = _sb.parse_slide_content(section.content or "")
 
-        # Parse the structured content
-        parsed = parse_slide_content(section.content or "")
+        # Title
+        title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.4), Inches(9), Inches(1))
+        tf = title_box.text_frame
+        tf.text = parsed.get("title") or section.title
+        tf.word_wrap = True
+        tp = tf.paragraphs[0]
+        tp.font.size = Pt(36)
+        tp.font.bold = True
+        tp.font.name = "Calibri"
+        tp.font.color.rgb = RGBColor(17, 24, 39)
 
-        # Add title - matching the editor's style (text-4xl font-bold text-gray-900)
-        title_box = slide.shapes.add_textbox(
-            Inches(0.5), Inches(0.4), Inches(9), Inches(1)
-        )
-        title_frame = title_box.text_frame
-        title_frame.text = parsed['title'] or section.title
-        title_frame.word_wrap = True
-        title_para = title_frame.paragraphs[0]
-        title_para.font.size = Pt(36)  # Matches text-4xl
-        title_para.font.bold = True
-        title_para.font.name = 'Calibri'
-        title_para.font.color.rgb = RGBColor(17, 24, 39)  # text-gray-900
-
-        # Determine layout based on whether there's an image suggestion
-        if parsed['image_suggestion']:
-            # Two-column layout: content on left, image placeholder on right
+        # Layout — content area is everything below the title
+        content_top = Inches(1.5)
+        content_height = Inches(3.5)
+        has_image = bool(parsed.get("image_suggestion"))
+        if has_image:
             content_left = Inches(0.5)
-            content_top = Inches(1.5)
             content_width = Inches(5)
-            content_height = Inches(3.5)
-
-            # Add content textbox
-            content_box = slide.shapes.add_textbox(
-                content_left, content_top, content_width, content_height
-            )
-            content_frame = content_box.text_frame
-            content_frame.word_wrap = True
-
-            # Add bullet points - matching editor style with actual bullets
-            for i, bullet in enumerate(parsed['bullets']):
-                if i == 0:
-                    p = content_frame.paragraphs[0]
-                else:
-                    p = content_frame.add_paragraph()
-
-                # Set bullet text
-                p.text = bullet
-                p.level = 0
-
-                # Add bullet using XML directly
-                from pptx.oxml.xmlchemy import OxmlElement
-                pPr = p._element.get_or_add_pPr()
-
-                # Create bullet node
-                buNone = pPr.find('{http://schemas.openxmlformats.org/drawingml/2006/main}buNone')
-                if buNone is not None:
-                    pPr.remove(buNone)
-
-                # Add bullet character
-                buChar = OxmlElement('a:buChar')
-                buChar.set('char', '•')
-                pPr.append(buChar)
-
-                # Style the text
-                p.font.size = Pt(18)  # text-lg
-                p.font.name = 'Calibri'
-                p.font.color.rgb = RGBColor(55, 65, 81)  # text-gray-700
-                p.space_before = Pt(12)  # space-y-4
-
-            # Add image placeholder
-            img_left = Inches(6)
-            img_top = Inches(1.5)
-            img_width = Inches(3.5)
-            img_height = Inches(3.5)
-
-            img_placeholder = slide.shapes.add_textbox(
-                img_left, img_top, img_width, img_height
-            )
-            img_frame = img_placeholder.text_frame
-            img_frame.word_wrap = True  # Enable word wrapping
-            img_frame.vertical_anchor = 1  # Middle vertical alignment
-
-            # Add image icon and text
-            img_frame.text = f"📷 Image:\n{parsed['image_suggestion']}"
-            img_para = img_frame.paragraphs[0]
-            img_para.font.size = Pt(12)
-            img_para.font.italic = True
-            img_para.font.color.rgb = RGBColor(107, 114, 128)  # Gray
-            img_para.alignment = 1  # Center
-
-            # Add border to image placeholder
-            line = img_placeholder.line
-            line.color.rgb = RGBColor(200, 200, 200)
-            line.width = Pt(1)
         else:
-            # Full-width content layout
             content_left = Inches(1)
-            content_top = Inches(1.5)
             content_width = Inches(8)
-            content_height = Inches(3.5)
 
-            content_box = slide.shapes.add_textbox(
-                content_left, content_top, content_width, content_height
-            )
-            content_frame = content_box.text_frame
-            content_frame.word_wrap = True
+        blocks = parsed.get("blocks") or []
+        if blocks:
+            # Stack blocks vertically, splitting available height.
+            n = len(blocks)
+            block_height = Inches(content_height.inches / n)
+            for i, block in enumerate(blocks):
+                top = Inches(content_top.inches + i * block_height.inches)
+                _render_block_pptx(slide, block, content_left, top, content_width, block_height)
 
-            # Add bullet points - matching editor style with actual bullets
-            for i, bullet in enumerate(parsed['bullets']):
-                if i == 0:
-                    p = content_frame.paragraphs[0]
-                else:
-                    p = content_frame.add_paragraph()
-
-                # Set bullet text
-                p.text = bullet
-                p.level = 0
-
-                # Add bullet using XML directly
-                from pptx.oxml.xmlchemy import OxmlElement
-                pPr = p._element.get_or_add_pPr()
-
-                # Create bullet node
-                buNone = pPr.find('{http://schemas.openxmlformats.org/drawingml/2006/main}buNone')
-                if buNone is not None:
-                    pPr.remove(buNone)
-
-                # Add bullet character
-                buChar = OxmlElement('a:buChar')
-                buChar.set('char', '•')
-                pPr.append(buChar)
-
-                # Style the text
-                p.font.size = Pt(20)
-                p.font.name = 'Calibri'
-                p.font.color.rgb = RGBColor(55, 65, 81)  # text-gray-700
-                p.space_before = Pt(12)  # space-y-4
+        if has_image:
+            _render_image_placeholder(slide, parsed["image_suggestion"])
 
     file_stream = io.BytesIO()
     prs.save(file_stream)

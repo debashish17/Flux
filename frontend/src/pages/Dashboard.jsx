@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../api';
+import { supabase } from '../supabase';
 import { FileText, Plus, Presentation, Trash2, Search, SlidersHorizontal, LogOut } from 'lucide-react';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 
@@ -39,10 +40,10 @@ export default function Dashboard() {
         },
     });
 
-    const handleLogout = () => {
-        localStorage.removeItem('token');
-        queryClient.clear(); // Clear all React Query cache
-        window.location.href = '/login'; // Force full reload to update auth state
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        queryClient.clear();
+        window.location.href = '/login';
     };
 
     const openDeleteModal = (e, projectId, projectTitle) => {

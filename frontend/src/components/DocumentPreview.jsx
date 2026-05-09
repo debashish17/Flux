@@ -12,7 +12,7 @@ import './DocumentPreview.css';
  * Renders HTML preview with inline rich text editing
  * Auto-saves on click outside or Ctrl+S
  */
-export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', projectId, onSectionUpdate, onSectionRefresh, onFeedbackMapChange }) {
+export default function DocumentPreview({ sections, viewMode = 'preview', projectTitle = '', projectId, feedbackMap = {}, onSectionUpdate, onSectionRefresh, onFeedbackMapChange }) {
   const [editingSection, setEditingSection] = useState(null);
   const [localSections, setLocalSections] = useState(sections); // Local state for optimistic updates
   const [sectionFeedback, setSectionFeedback] = useState({}); // Track feedback for all sections: { sectionId: { type: 'LIKE'|'DISLIKE', comment: string } }
@@ -258,6 +258,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
                           key={`feedback-${section.id}`}
                           sectionId={section.id}
                           projectId={projectId}
+                          cachedFeedback={feedbackMap[section.id] ?? { userFeedback: null, likes: 0, dislikes: 0 }}
                           onFeedbackChange={(type, comment) => {
                             setSectionFeedback(prev => ({
                               ...prev,
@@ -295,6 +296,7 @@ export default function DocumentPreview({ sections, viewMode = 'preview', projec
                         key={`feedback-${section.id}`}
                         sectionId={section.id}
                         projectId={projectId}
+                        cachedFeedback={feedbackMap[section.id] ?? { userFeedback: null, likes: 0, dislikes: 0 }}
                         onFeedbackChange={(type, comment) => {
                           setSectionFeedback(prev => ({
                             ...prev,

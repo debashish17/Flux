@@ -1,53 +1,107 @@
-from datetime import datetime, timedelta
+"""
+Supabase Auth integration.
+
+Verifies Supabase-issued JWTs (asymmetric, RS256/ES256) using the project's
+JWKS endpoint, and lazily mirrors the user into our `public.users` table on
+first request.
+
+For projects still on the legacy HS256 shared secret, set
+SUPABASE_JWT_SECRET in .env — that path is used as a fallback.
+"""
+import os
+import time
+import logging
 from typing import Optional
+
+import httpx
 from jose import JWTError, jwt
-import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+
 import database
 
-# SECRET_KEY should be in env vars in production
-SECRET_KEY = "supersecretkey"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+logger = logging.getLogger("uvicorn.error")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")  # legacy HS256 fallback
+SUPABASE_JWT_AUDIENCE = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated")
 
-def verify_password(plain_password, hashed_password):
-    # Bcrypt has a 72-byte limit, so we truncate long passwords
-    password_bytes = plain_password.encode('utf-8')[:72]
-    return bcrypt.checkpw(password_bytes, hashed_password.encode('utf-8'))
+JWKS_TTL_SECONDS = 3600  # refresh public keys hourly
+_jwks_cache: dict = {"keys": None, "fetched_at": 0.0}
 
-def get_password_hash(password):
-    # Bcrypt has a 72-byte limit, so we truncate long passwords
-    password_bytes = password.encode('utf-8')[:72]
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password_bytes, salt)
-    return hashed.decode('utf-8')
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=True)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db = Depends(database.get_db)):
+async def _get_jwks() -> list[dict]:
+    """Fetch & cache the project's JWKS document."""
+    now = time.time()
+    if _jwks_cache["keys"] and (now - _jwks_cache["fetched_at"]) < JWKS_TTL_SECONDS:
+        return _jwks_cache["keys"]
+
+    if not SUPABASE_URL:
+        raise RuntimeError("SUPABASE_URL is not configured")
+
+    url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+
+    _jwks_cache["keys"] = data.get("keys", [])
+    _jwks_cache["fetched_at"] = now
+    logger.info(f"Refreshed JWKS from {url} ({len(_jwks_cache['keys'])} keys)")
+    return _jwks_cache["keys"]
+
+
+def _find_key(jwks: list[dict], kid: Optional[str]) -> Optional[dict]:
+    if not kid:
+        # Some tokens lack kid; fall back to the first key.
+        return jwks[0] if jwks else None
+    for key in jwks:
+        if key.get("kid") == kid:
+            return key
+    return None
+
+
+async def _verify_with_jwks(token: str) -> dict:
+    """Verify token signature using the JWKS endpoint."""
+    unverified_header = jwt.get_unverified_header(token)
+    kid = unverified_header.get("kid")
+    alg = unverified_header.get("alg", "RS256")
+
+    jwks = await _get_jwks()
+    key = _find_key(jwks, kid)
+    if key is None:
+        # Maybe the key just rotated — bust the cache and retry once.
+        _jwks_cache["fetched_at"] = 0.0
+        jwks = await _get_jwks()
+        key = _find_key(jwks, kid)
+
+    if key is None:
+        raise JWTError(f"No matching JWKS key for kid={kid}")
+
+    return jwt.decode(
+        token,
+        key,
+        algorithms=[alg],
+        audience=SUPABASE_JWT_AUDIENCE,
+    )
+
+
+def _verify_with_secret(token: str) -> dict:
+    """Legacy HS256 verification (kept for backwards compatibility)."""
+    return jwt.decode(
+        token,
+        SUPABASE_JWT_SECRET,
+        algorithms=["HS256"],
+        audience=SUPABASE_JWT_AUDIENCE,
+    )
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(database.get_db)):
     """
-    Validate JWT token and return the current authenticated user.
-
-    Args:
-        token: JWT token from Authorization header
-        db: Database connection
-
-    Returns:
-        User object from database
-
-    Raises:
-        HTTPException: If token is invalid or user not found
+    Validate a Supabase JWT and return the matching row from `public.users`.
+    Creates the row on first sight (lazy mirror of `auth.users`).
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -56,24 +110,51 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db = Depends(dat
     )
 
     try:
-        # Decode JWT token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
+        # Inspect the token header to decide which verification path to use.
+        unverified_header = jwt.get_unverified_header(token)
+        alg = unverified_header.get("alg", "")
 
-        if email is None:
-            raise credentials_exception
+        if alg == "HS256":
+            if not SUPABASE_JWT_SECRET:
+                raise JWTError("HS256 token received but SUPABASE_JWT_SECRET not set")
+            payload = _verify_with_secret(token)
+        else:
+            if not SUPABASE_URL:
+                raise JWTError("Asymmetric token received but SUPABASE_URL not set")
+            payload = await _verify_with_jwks(token)
 
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"JWT validation failed: {e}")
+        raise credentials_exception
+    except httpx.HTTPError as e:
+        logger.error(f"JWKS fetch failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Auth provider unreachable",
+        )
+
+    user_id = payload.get("sub")
+    email = payload.get("email")
+
+    if not user_id:
         raise credentials_exception
 
-    # Get user from database
-    from prisma import Prisma
-    if isinstance(db, Prisma):
-        user = await db.user.find_unique(where={"email": email})
+    user = await db.user.find_unique(where={"id": user_id})
 
-        if user is None:
+    if user is None:
+        # First time we see this Supabase user — mirror them into public.users.
+        if not email:
             raise credentials_exception
+        try:
+            user = await db.user.create(
+                data={"id": user_id, "email": email}
+            )
+            logger.info(f"Mirrored new Supabase user {user_id} ({email}) into public.users")
+        except Exception as e:
+            # Race: another request created the row between find and create.
+            logger.warning(f"User create raced or failed, refetching: {e}")
+            user = await db.user.find_unique(where={"id": user_id})
+            if user is None:
+                raise credentials_exception
 
-        return user
-
-    raise credentials_exception
+    return user

@@ -1,13 +1,16 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from database import connect_db, disconnect_db
-from routers import auth, projects, generation, export, chat
+from routers import projects, generation, export, chat
 from routers import sections, feedback
 
-print(f"[STARTUP] Sections router loaded: {sections.router}")
-print(f"[STARTUP] Sections router prefix: {sections.router.prefix}")
-print(f"[STARTUP] Sections router routes: {len(sections.router.routes)}")
+# Only print debug info in development
+if os.getenv("ENVIRONMENT") == "development":
+    print(f"[STARTUP] Sections router loaded: {sections.router}")
+    print(f"[STARTUP] Sections router prefix: {sections.router.prefix}")
+    print(f"[STARTUP] Sections router routes: {len(sections.router.routes)}")
 
 # Database lifecycle management with lifespan
 @asynccontextmanager
@@ -23,8 +26,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Document Authoring Platform", lifespan=lifespan)
 
-# CORS - Explicitly configure to allow DELETE requests
-origins = ["*"]
+# CORS - Configure based on environment
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if ENVIRONMENT == "production":
+    # Restrict CORS in production to specific origins
+    origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    origins = [origin.strip() for origin in origins if origin.strip()]
+else:
+    # Allow all origins in development
+    origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,7 +47,6 @@ app.add_middleware(
     max_age=3600,
 )
 
-app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(generation.router)
 app.include_router(export.router)

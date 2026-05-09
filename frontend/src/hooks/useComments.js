@@ -17,8 +17,19 @@ export const useAddComment = () => {
     mutationFn: ({ sectionId, comment }) =>
       api.post(`/feedback/sections/${sectionId}/comments`, { comment }).then(res => res.data),
     onSuccess: (newComment, variables) => {
-      // Invalidate to trigger a single refetch
-      queryClient.invalidateQueries({ queryKey: ['sections', variables.sectionId, 'comments'] });
+      // OPTIMIZED: Update batch cache directly
+      queryClient.setQueryData(['projects', parseInt(variables.projectId), 'comments'], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          [variables.sectionId]: [...(old[variables.sectionId] || []), newComment]
+        };
+      });
+
+      // Update individual cache
+      queryClient.setQueryData(['sections', variables.sectionId, 'comments'], (old) => {
+        return [...(old || []), newComment];
+      });
     },
     onError: (err) => {
       console.error('Failed to save comment:', err);
@@ -33,8 +44,19 @@ export const useDeleteComment = () => {
     mutationFn: ({ sectionId, commentId }) =>
       api.delete(`/feedback/sections/${sectionId}/comments/${commentId}`).then(res => res.data),
     onSuccess: (data, variables) => {
-      // Simply invalidate to trigger a single refetch
-      queryClient.invalidateQueries({ queryKey: ['sections', variables.sectionId, 'comments'] });
+      // OPTIMIZED: Update batch cache directly
+      queryClient.setQueryData(['projects', parseInt(variables.projectId), 'comments'], (old) => {
+        if (!old || !old[variables.sectionId]) return old;
+        return {
+          ...old,
+          [variables.sectionId]: old[variables.sectionId].filter(c => c.id !== variables.commentId)
+        };
+      });
+
+      // Update individual cache
+      queryClient.setQueryData(['sections', variables.sectionId, 'comments'], (old) => {
+        return (old || []).filter(c => c.id !== variables.commentId);
+      });
     },
     onError: (err) => {
       console.error('Failed to delete comment:', err);

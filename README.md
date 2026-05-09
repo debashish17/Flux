@@ -1,5 +1,12 @@
 # ⚡ FLUX
 
+## 🎥 Demo Video
+
+[![Watch the demo](https://img.shields.io/badge/Watch%20Demo-Click%20Here-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1XmkdUWUm-VaUkK4V7mQ0k-Cr6xZ6YjzQ/view?usp=drive_link)
+
+<div align="center">
+
+
 <div align="center">
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
@@ -308,20 +315,25 @@ Step 7: Feedback clears, buttons reset
 
 ## 🎨 Screenshots
 
+### Landing Page
+<img src="assets/landing%20page.png" alt="Landing Page Screenshot" width="400" />
+*Modern, welcoming entry point for users*
+
+
 ### Dashboard
-![Dashboard](https://via.placeholder.com/800x450/4f46e5/ffffff?text=Dashboard+with+Statistics+%26+Filters)
+<img src="assets/dashboard1.png" alt="Dashboard Screenshot" width="400" />
 *Search, filter, and manage all your projects*
 
 ### Document Editor
-![Document Editor](https://via.placeholder.com/800x450/10b981/ffffff?text=Split+View+Editor+with+Live+Preview)
+<img src="assets/document%20editor.png" alt="Document Editor Screenshot" width="400" />
 *Markdown editing with real-time HTML preview*
 
 ### Presentation Editor
-![Presentation Editor](https://via.placeholder.com/800x450/f59e0b/ffffff?text=Slide+Editor+with+Thumbnails)
+<img src="assets/presentation%20editor.png" alt="Presentation Editor Screenshot" width="400" />
 *Visual slide editing with navigation sidebar*
 
 ### Feedback System
-![Feedback System](https://via.placeholder.com/800x450/ef4444/ffffff?text=Like%2FDislike+with+Comment+Box)
+<img src="assets/feedback.png" alt="Feedback System Screenshot" width="400" />
 *Interactive feedback with auto-save comments*
 
 ---
