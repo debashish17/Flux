@@ -22,7 +22,6 @@ class SectionResponse(BaseModel):
     id: int
     title: str
     content: Optional[str]
-    htmlContent: Optional[str]
     orderIndex: int
 
     class Config:
@@ -152,30 +151,28 @@ async def generate_full_document(
 
     logger.info(f"Markdown generation complete. Content length: {len(markdown_content)}")
 
+    # If the AI service returned an error string, abort instead of corrupting the project.
+    if ai_service.is_error_response(markdown_content):
+        logger.error(f"AI returned error: {markdown_content[:120]}")
+        raise HTTPException(status_code=502, detail=markdown_content)
+
     # Split markdown into sections
     logger.info("Splitting markdown into sections...")
     sections_content = markdown_utils.split_markdown_by_sections(markdown_content, section_titles)
 
-    # Update each section with its content and HTML
-    for section in sections:
-        section_markdown = sections_content.get(section.title, f"## {section.title}\n\nContent not generated.")
-        section_html = markdown_utils.markdown_to_html(section_markdown)
-
-        logger.info(f"Updating section {section.id} ({section.title}): {len(section_markdown)} chars markdown, {len(section_html)} chars HTML")
-
-        await db.documentsection.update(
-            where={"id": section.id},
-            data={
-                "content": section_markdown,
-                "htmlContent": section_html
-            }
+    # Persist all section updates + project timestamp atomically
+    async with db.tx() as tx:
+        for section in sections:
+            section_markdown = sections_content.get(section.title, f"## {section.title}\n\nContent not generated.")
+            logger.info(f"Updating section {section.id} ({section.title}): {len(section_markdown)} chars markdown")
+            await tx.documentsection.update(
+                where={"id": section.id},
+                data={"content": section_markdown},
+            )
+        await tx.project.update(
+            where={"id": project_id},
+            data={"updatedAt": datetime.now()},
         )
-
-    # Update project's updatedAt timestamp
-    await db.project.update(
-        where={"id": project_id},
-        data={"updatedAt": datetime.now()}
-    )
 
     logger.info(f"All {len(sections)} sections updated successfully")
     logger.info(f"Project updatedAt timestamp refreshed")

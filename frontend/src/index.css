@@ -1,307 +1,257 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&display=swap');
 
-/* ========================================
-   PROFESSIONAL GEOMETRIC DESIGN SYSTEM
-   ======================================== */
-
+/* ========================================================================
+   FLUX — APP-WIDE TOKENS (tokens-only restyle)
+   Applies to every page (Login, Dashboard, ProjectSetup, editors, etc.).
+   The .wollo-scoped block below is for the landing page only.
+   ======================================================================== */
 :root {
-  /* Light Professional Color Palette */
-  --glass-white: rgba(255, 255, 255, 0.95);
-  --glass-light: rgba(255, 255, 255, 0.8);
-  --glass-medium: rgba(255, 255, 255, 0.6);
-
-  /* Accent Colors - Light & Professional */
-  --accent-primary: #6366f1;
-  --accent-primary-light: #818cf8;
-  --accent-secondary: #8b5cf6;
-  --accent-success: #10b981;
-  --accent-warning: #f59e0b;
-  --accent-error: #ef4444;
-
-  /* Text Colors */
-  --text-primary: #1e293b;
-  --text-secondary: #64748b;
-  --text-tertiary: #94a3b8;
-
-  /* Background */
-  --bg-gradient-start: #f8fafc;
-  --bg-gradient-end: #e0e7ff;
-
-  /* Shadows */
-  --shadow-glass: 0 4px 16px 0 rgba(31, 38, 135, 0.1);
-  --shadow-glass-hover: 0 6px 20px 0 rgba(31, 38, 135, 0.15);
-  --shadow-sm: 0 1px 4px 0 rgba(31, 38, 135, 0.08);
-
-  /* Border - Geometric */
-  --border-glass: 1px solid rgba(99, 102, 241, 0.15);
-  --border-radius: 4px;
-  --border-radius-lg: 8px;
+  --flx-violet:     #5B3DF5;
+  --flx-violet-600: #4A2FCD;
+  --flx-violet-50:  #EFEBFF;
+  --flx-pink:       #FF3FA4;
+  --flx-yellow:     #FFD93D;
+  --flx-orange:     #FF6A2B;
+  --flx-ink:        #0E0E10;
+  --flx-surface:    #F4F4F6;
 }
 
-* {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+/* Onest applied globally — overrides Inter from the older block below */
+html, body, #root {
+  font-family: 'Onest', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-
 body {
-  background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
-  background-attachment: fixed;
-  color: var(--text-primary);
-  position: relative;
-  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Minimal Background Pattern */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.015;
-  pointer-events: none;
-  background-image:
-    radial-gradient(circle at 20% 30%, var(--accent-primary) 0%, transparent 50%),
-    radial-gradient(circle at 80% 70%, var(--accent-secondary) 0%, transparent 50%);
-  z-index: 0;
+/* ----------------------------------------------------------------------
+   Tailwind utility re-tints — pages already use .bg-blue-*, .text-blue-*,
+   .bg-indigo-*, .text-indigo-*, etc. We remap those to brand violet so
+   every page picks up the new accent without changing JSX.
+   ---------------------------------------------------------------------- */
+.bg-blue-50,
+.bg-indigo-50  { background-color: var(--flx-violet-50) !important; }
+.bg-blue-100,
+.bg-indigo-100 { background-color: #DDD3FF !important; }
+.bg-blue-400,
+.bg-blue-500,
+.bg-blue-600,
+.bg-indigo-600 { background-color: var(--flx-violet) !important; }
+.bg-blue-700,
+.bg-indigo-700 { background-color: var(--flx-violet-600) !important; }
+
+.text-blue-600,
+.text-indigo-600,
+.text-purple-600 { color: var(--flx-violet) !important; }
+.text-blue-700,
+.text-indigo-700,
+.text-purple-700 { color: var(--flx-violet-600) !important; }
+
+.from-blue-50    { --tw-gradient-from: var(--flx-violet-50) !important; }
+.from-blue-600   { --tw-gradient-from: var(--flx-violet) !important; }
+.to-blue-100,
+.to-purple-100   { --tw-gradient-to: #DDD3FF !important; }
+.from-purple-50  { --tw-gradient-from: #FCEEFF !important; }
+
+/* Hover variants */
+.hover\:bg-blue-700:hover,
+.hover\:bg-indigo-700:hover { background-color: var(--flx-violet-600) !important; }
+.hover\:text-blue-700:hover,
+.hover\:text-indigo-700:hover { color: var(--flx-violet-600) !important; }
+
+/* Focus rings tinted to brand */
+.focus\:ring-blue-500:focus,
+.focus\:ring-indigo-500:focus { --tw-ring-color: rgba(91,61,245,0.5) !important; }
+.focus\:border-blue-500:focus,
+.focus\:border-indigo-500:focus { border-color: var(--flx-violet) !important; }
+
+/* ----------------------------------------------------------------------
+   Button polish — round the existing Tailwind buttons toward pill shape
+   and add the soft-violet shadow used on the landing CTA.
+   ---------------------------------------------------------------------- */
+button.bg-indigo-600,
+button.bg-blue-600,
+a.bg-indigo-600,
+a.bg-blue-600 {
+  border-radius: 999px;
+  box-shadow: 0 8px 18px -10px rgba(91,61,245,0.55);
+  transition: transform 160ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms ease, background-color 200ms ease;
 }
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-/* ========================================
-   ANIMATIONS - MINIMAL
-   ======================================== */
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes slide-in {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-/* ========================================
-   UTILITY CLASSES
-   ======================================== */
-
-.animate-slide-in {
-  animation: slide-in 0.2s ease-out;
-}
-
-.animate-bounce-in {
-  animation: scale-in 0.2s ease-out;
-}
-
-.animate-pop-in {
-  animation: fade-in 0.15s ease-out;
-}
-
-.animate-float {
-  /* Removed floating animation */
-}
-
-@keyframes float {
-
-  0%,
-  100% {
-    transform: translateY(0px);
-  }
-
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-/* Geometric Card */
-.cartoon-card {
-  background: var(--glass-white);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: var(--border-glass);
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-glass);
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.cartoon-card:hover {
-  box-shadow: var(--shadow-glass-hover);
-  border-color: rgba(99, 102, 241, 0.25);
-}
-
-/* Geometric Button */
-.cartoon-btn {
-  border: none;
-  border-radius: var(--border-radius);
-  font-weight: 600;
-  transition: all 0.15s ease;
-  position: relative;
-  overflow: hidden;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.cartoon-btn:hover:not(:disabled) {
-  box-shadow: var(--shadow-glass);
-}
-
-.cartoon-btn:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.cartoon-btn-primary {
-  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary-light) 100%);
-  color: white;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-}
-
-.cartoon-btn-primary:hover:not(:disabled) {
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
-}
-
-.cartoon-btn-secondary {
-  background: var(--glass-light);
-  color: var(--text-primary);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-}
-
-.cartoon-btn-success {
-  background: linear-gradient(135deg, var(--accent-success) 0%, #34d399 100%);
-  color: white;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-}
-
-.cartoon-btn-danger {
-  background: linear-gradient(135deg, var(--accent-error) 0%, #f87171 100%);
-  color: white;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-}
-
-/* Glass Input */
-.cartoon-input {
-  background: var(--glass-white);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: var(--border-radius);
-  padding: 0.75rem 1rem;
-  transition: all 0.2s ease;
-  font-family: 'Inter', sans-serif;
-  color: var(--text-primary);
-}
-
-.cartoon-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
-
-.cartoon-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-/* Glass Badge */
-.cartoon-badge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background: var(--glass-light);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-}
-
-/* Geometric Decorative Elements */
-.deco-circle {
-  position: absolute;
-  border-radius: 0%;
-  opacity: 0.04;
-  pointer-events: none;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  transform: rotate(45deg);
-}
-
-.deco-blob {
-  position: absolute;
-  border-radius: 0%;
-  opacity: 0.04;
-  pointer-events: none;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  transform: rotate(30deg);
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.5);
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-primary-light) 100%);
-  border-radius: 10px;
-  border: 2px solid rgba(255, 255, 255, 0.5);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--accent-primary);
+button.bg-indigo-600:hover,
+button.bg-blue-600:hover,
+a.bg-indigo-600:hover,
+a.bg-blue-600:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px -10px rgba(91,61,245,0.7);
 }
 
 /* Selection */
-::selection {
-  background: rgba(99, 102, 241, 0.2);
-  color: var(--text-primary);
+::selection { background: rgba(91,61,245,0.22); color: var(--flx-ink); }
+
+/* ========================================================================
+   FLUX / WOLLO LANDING — Spline + GSAP version
+   Initial states are set so GSAP can drive entrances. The CSS only owns
+   colors, layout, hover lifts, and the basic crossfade transition class.
+   All scroll choreography lives in Landing.jsx via GSAP ScrollTrigger.
+   ======================================================================== */
+
+.wollo {
+  --w-bg:         #FFFFFF;
+  --w-surface:    #F4F4F6;
+  --w-ink:        #0E0E10;
+  --w-violet:     #5B3DF5;
+  --w-periwinkle: #8A7BFF;
+  --w-pink:       #FF3FA4;
+  --w-yellow:     #FFD93D;
+  --w-orange:     #FF6A2B;
+
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 180ms;
+  --t-base: 320ms;
+  --t-slow: 600ms;
+
+  background: #ECECEE;
+  color: var(--w-ink);
+  font-family: 'Onest', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.wollo *, .wollo *::before, .wollo *::after { box-sizing: border-box; }
+.wollo, .wollo * { font-family: 'Onest', ui-sans-serif, system-ui, sans-serif; }
+.wollo h1, .wollo h2, .wollo h3, .wollo h4, .wollo h5, .wollo h6 {
+  font-weight: inherit; letter-spacing: inherit; line-height: inherit;
 }
 
-/* Loading Spinner */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
+.wollo .flx-tight   { letter-spacing: -0.025em; line-height: 0.95; }
+.wollo .flx-tighter { letter-spacing: -0.035em; line-height: 0.92; }
+.wollo .flx-num     { font-feature-settings: "tnum" 1, "lnum" 1; font-variant-numeric: tabular-nums lining-nums; }
 
-  to {
-    transform: rotate(360deg);
-  }
+.wollo .flx-frame {
+  background: var(--w-bg);
+  border-radius: 28px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04), 0 24px 60px -30px rgba(14,14,16,0.18);
+  overflow: hidden;
 }
 
-.cartoon-spinner {
-  animation: spin 1s linear infinite;
+/* Pills & buttons */
+.wollo .flx-pill {
+  background: var(--w-surface);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(14,14,16,0.04), inset 0 1px 2px rgba(14,14,16,0.04);
+  transition: background var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out);
+}
+.wollo .flx-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; padding: 14px 22px; font-weight: 500; font-size: 15px;
+  white-space: nowrap; cursor: pointer; text-decoration: none; min-height: 44px;
+  transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-base) var(--ease-out),
+              background-color var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out);
+  will-change: transform;
+}
+.wollo .flx-btn:hover  { transform: translateY(-1px) scale(1.02); }
+.wollo .flx-btn:active { transform: translateY(0) scale(0.98); transition-duration: 90ms; }
+.wollo .flx-btn:focus-visible { outline: 3px solid #FFD93D; outline-offset: 2px; }
+.wollo .flx-btn-ink           { background: var(--w-ink); color: #fff; }
+.wollo .flx-btn-violet        { background: var(--w-violet); color: #fff; box-shadow: 0 10px 22px -12px rgba(91,61,245,0.7); }
+.wollo .flx-btn-violet:hover  { box-shadow: 0 14px 32px -10px rgba(91,61,245,0.7); }
+.wollo .flx-btn-outline       { background: #fff; color: var(--w-ink); box-shadow: inset 0 0 0 1px rgba(14,14,16,0.14); }
+.wollo .flx-btn-outline-white { background: transparent; color: #fff; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.85); }
+
+/* Wordmark */
+.wollo .flx-wordmark { position: relative; display: inline-block; font-weight: 600; letter-spacing: -0.02em; transition: color var(--t-base) var(--ease-out); }
+.wollo .flx-wordmark .flx-smile {
+  position: absolute; right: 0.05em; bottom: -0.18em;
+  width: 0.42em; height: 0.22em;
+  border: 0 solid currentColor; border-bottom-width: 2.2px;
+  border-bottom-left-radius: 999px; border-bottom-right-radius: 999px;
+}
+
+/* Hero stage */
+.wollo .flx-hero-violet {
+  background: radial-gradient(120% 80% at 50% 0%, #6E54FF 0%, #5B3DF5 60%, #4A2FCD 100%);
+  border-radius: 28px;
+}
+
+/* Grain */
+.wollo .flx-grain { position: relative; isolation: isolate; }
+.wollo .flx-grain::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  opacity: 0.10; mix-blend-mode: multiply; border-radius: inherit; z-index: 1;
+}
+.wollo .flx-grain > *         { position: relative; z-index: 2; }
+.wollo .flx-grain > .absolute { position: absolute; }
+
+.wollo .flx-halftone   { background-image: radial-gradient(rgba(0,0,0,0.35) 1.2px, transparent 1.4px); background-size: 8px 8px; }
+.wollo .flx-ill-shadow { filter: drop-shadow(0 24px 24px rgba(14,14,16,0.18)); }
+
+/* Sticker */
+.wollo .flx-sticker {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 500;
+  transform: rotate(-4deg);
+  box-shadow: 0 6px 16px -8px rgba(14,14,16,0.35);
+  transition: transform var(--t-base) var(--ease-out);
+}
+
+/* Card lift */
+.wollo .flx-lift { transition: transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out); will-change: transform; }
+.wollo .flx-lift:hover { transform: translateY(-6px); box-shadow: 0 1px 0 rgba(14,14,16,0.04), 0 40px 80px -36px rgba(14,14,16,0.28); }
+.wollo .flx-lift:hover .flx-sticker { transform: rotate(-2deg) translateY(-1px); }
+
+/* Marquee — GSAP drives the transform, CSS just sets layout */
+.wollo .flx-marquee {
+  overflow: hidden; white-space: nowrap; position: relative;
+  mask-image: linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+}
+.wollo .flx-marquee-track { display: inline-flex; gap: 64px; width: max-content; will-change: transform; }
+.wollo .flx-marquee-track > * { flex-shrink: 0; }
+
+/* Analytics card crossfade — GSAP toggles opacity, CSS owns the eased transition */
+.wollo .flx-cycle-view { transition: opacity 600ms var(--ease-in-out); }
+
+/* Navbar swap */
+.wollo .flx-nav-shell {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.92), rgba(255,255,255,0.72));
+  backdrop-filter: saturate(140%) blur(8px);
+  -webkit-backdrop-filter: saturate(140%) blur(8px);
+  transition: background var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out);
+}
+.wollo .flx-nav-shell.on-violet { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.wollo .flx-nav-text { color: var(--w-ink); transition: color var(--t-base) var(--ease-out); text-decoration: none; }
+.wollo .flx-nav-shell.on-violet .flx-nav-text  { color: #fff; }
+.wollo .flx-nav-shell.on-violet .flx-nav-mark  { color: var(--w-pink); }
+.wollo .flx-nav-shell.on-violet .flx-nav-pill  { background: rgba(255,255,255,0.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18); }
+.wollo .flx-nav-shell.on-violet .flx-nav-cta   { background: #fff; color: var(--w-ink); }
+
+/* FAQ chev */
+.wollo details > summary { list-style: none; cursor: pointer; transition: color var(--t-fast) var(--ease-out); }
+.wollo details > summary::-webkit-details-marker { display: none; }
+.wollo details:hover > summary { color: var(--w-violet); }
+.wollo .flx-chev {
+  display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 999px;
+  background: var(--w-surface);
+  transition: transform var(--t-base) var(--ease-out), background var(--t-base) var(--ease-out);
+}
+.wollo details[open] .flx-chev { transform: rotate(180deg); background: rgba(91,61,245,0.10); }
+.wollo details[open] > p { animation: flx-fade-in 360ms var(--ease-out) both; }
+@keyframes flx-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* The hero word-mask: each word lives inside an overflow-hidden span,
+   so GSAP can translate the inner .flx-word from below the baseline. */
+.wollo .flx-mask span > .flx-word { will-change: transform, opacity; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .wollo .flx-cycle-view { transition: opacity 1ms linear; }
+  .wollo .flx-btn:hover, .wollo .flx-lift:hover { transform: none; }
 }

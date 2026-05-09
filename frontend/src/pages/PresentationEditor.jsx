@@ -1,21 +1,41 @@
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '../api';
-import { Download, RefreshCw, Loader2, MessageSquare, Menu, X, Sparkles, Home, Check } from 'lucide-react';
+import { Download, RefreshCw, Loader2, MessageSquare, Menu, X, Sparkles, Home, Check, ArrowUpDown } from 'lucide-react';
 import ChatSidebar from '../components/ChatSidebar';
 import SectionFeedback from '../components/SectionFeedback';
+import SectionRefinementHistory from '../components/SectionRefinementHistory';
+import SectionReorder from '../components/SectionReorder';
+import SlideBlockRenderer from '../components/SlideBlockRenderer';
+import {
+  parseSlideContent as parseSlideV1,
+  serializeSlideContent as serializeSlideV1,
+} from '../utils/slideContent';
 import { errorToast, successToast } from '../utils/toast';
+import { useProject, useProjectFeedback } from '../hooks/useProject';
+import { useUpdateSection } from '../hooks/useSections';
+import { useGenerateSection, useRegenerateWithFeedback } from '../hooks/useGeneration';
+import { useExportProject } from '../hooks/useExport';
+import { debounce } from 'lodash';
 
 export default function PresentationEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const queryClient = useQueryClient();
+
+  // React Query hooks
+  const { data: project, isLoading } = useProject(id);
+  const { data: projectFeedback } = useProjectFeedback(id);
+  const updateSection = useUpdateSection();
+  const generateSectionMutation = useGenerateSection();
+  const regenerateWithFeedback = useRegenerateWithFeedback();
+  const exportProject = useExportProject();
   const [chatOpen, setChatOpen] = useState(false);
   const [slidesOpen, setSlidesOpen] = useState(true);
   const [activeSlide, setActiveSlide] = useState(0);
+  const [showReorder, setShowReorder] = useState(false);
   const [generatingSlides, setGeneratingSlides] = useState(new Set());
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [autoGenNotice, setAutoGenNotice] = useState("");
@@ -29,35 +49,28 @@ export default function PresentationEditor() {
   const [tempBullet, setTempBullet] = useState("");
   const [tempImage, setTempImage] = useState("");
 
-  // Load project from API and auto-generate empty slides
+  // Debounced section update function to reduce API calls
+  const debouncedSectionUpdate = useCallback(
+    debounce((sectionId, updates) => {
+      updateSection.mutate({ sectionId, updates, projectId: parseInt(id) });
+    }, 1000), // Wait 1 second after last edit
+    [id]
+  );
+
+  // Seed local feedbackCache from the project-level batch (1 API call instead of N)
   useEffect(() => {
-    loadProject();
-  }, [id]);
+    if (projectFeedback) setFeedbackCache(projectFeedback);
+  }, [projectFeedback]);
 
-  const loadProject = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get(`/projects/${id}`);
-      setProject(res.data);
-
-      // Load feedback in batch (single API call instead of N calls)
-      try {
-        const feedbackRes = await api.get(`/feedback/projects/${id}/batch`);
-        setFeedbackCache(feedbackRes.data);
-      } catch (error) {
-        console.error('Failed to load feedback batch:', error);
-      }
-      // Auto-generate content for empty sections
-      const emptySections = res.data.sections.filter(s => !s.content || s.content.trim() === '');
+  // Auto-generate content for empty sections on mount
+  useEffect(() => {
+    if (project && project.type === 'pptx' && project.sections.length > 0) {
+      const emptySections = project.sections.filter(s => !s.content || s.content.trim() === '');
       if (emptySections.length > 0) {
         startAutoGeneration(emptySections);
       }
-    } catch (error) {
-      console.error('Failed to load project', error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [project?.id]); // Only run when project ID changes
 
   // AI auto-generation batching logic
   const startAutoGeneration = async (emptySections) => {
@@ -83,13 +96,10 @@ export default function PresentationEditor() {
 
         while (retries > 0 && !success) {
           try {
-            const res = await api.post(`/generate/section/${section.id}`);
-            setProject(prev => ({
-              ...prev,
-              sections: prev.sections.map(s =>
-                s.id === section.id ? { ...s, content: res.data.content } : s
-              )
-            }));
+            await generateSectionMutation.mutateAsync({
+              sectionId: section.id,
+              projectId: parseInt(id)
+            });
             success = true;
           } catch (error) {
             retries--;
@@ -115,8 +125,7 @@ export default function PresentationEditor() {
     setAutoGenerating(false);
 
     // Invalidate dashboard cache
-    sessionStorage.removeItem('dashboard_projects');
-    sessionStorage.removeItem('dashboard_cache_timestamp');
+    queryClient.invalidateQueries(['projects']);
 
     if (failedSlides.length > 0) {
       setAutoGenNotice(`Generation completed with ${failedSlides.length} failed slide(s). Refresh to retry.`);
@@ -164,38 +173,43 @@ export default function PresentationEditor() {
     }
   }, []);
 
+  // Adapter layer: handlers below work with a flat
+  // { title, bullets[], imageSuggestion } shape for backward compat.
+  // Internally we read/write the v1 block schema. A slide may have many
+  // block types; the bullet handlers operate on the FIRST bullets block
+  // (creating one if missing) — matching today's editor UX.
   const parseSlideContent = (content) => {
-    if (!content) return { title: '', bullets: [], imageSuggestion: '' };
-    const result = { title: '', bullets: [], imageSuggestion: '' };
-    const lines = content.split('\n');
-    let inContentSection = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('TITLE:')) {
-        result.title = trimmed.replace('TITLE:', '').trim();
-      } else if (trimmed.startsWith('CONTENT:')) {
-        inContentSection = true;
-      } else if (trimmed.startsWith('IMAGE_SUGGESTION:')) {
-        result.imageSuggestion = trimmed.replace('IMAGE_SUGGESTION:', '').trim();
-        inContentSection = false;
-      } else if (inContentSection && trimmed) {
-        const bullet = trimmed.replace(/^[•\-*]\s*/, '');
-        if (bullet) result.bullets.push(bullet);
-      }
-    }
-    return result;
+    const v1 = parseSlideV1(content);
+    const firstBullets = v1.blocks.find(b => b.type === 'bullets');
+    return {
+      title: v1.title,
+      bullets: firstBullets ? [...firstBullets.items] : [],
+      imageSuggestion: v1.image_suggestion || '',
+      _v1: v1,  // preserve full block list for the renderer
+    };
   };
 
   const reconstructContent = (parsed) => {
-    let content = `TITLE: ${parsed.title}\nCONTENT:\n`;
-    parsed.bullets.forEach(bullet => {
-      content += `• ${bullet}\n`;
-    });
-    if (parsed.imageSuggestion) {
-      content += `IMAGE_SUGGESTION: ${parsed.imageSuggestion}`;
+    // Start from the original v1 (preserves non-bullet blocks)
+    const base = parsed._v1 || { title: '', blocks: [], image_suggestion: null };
+    const blocks = [...(base.blocks || [])];
+    const idx = blocks.findIndex(b => b.type === 'bullets');
+    const newBulletsBlock = parsed.bullets.length
+      ? { type: 'bullets', items: parsed.bullets }
+      : null;
+
+    if (idx >= 0) {
+      if (newBulletsBlock) blocks[idx] = newBulletsBlock;
+      else blocks.splice(idx, 1);
+    } else if (newBulletsBlock) {
+      blocks.unshift(newBulletsBlock);
     }
-    return content;
+
+    return serializeSlideV1({
+      title: parsed.title,
+      blocks,
+      image_suggestion: parsed.imageSuggestion || null,
+    });
   };
 
   // Memoize parsed slides to avoid re-parsing on every render - significant performance improvement
@@ -208,104 +222,145 @@ export default function PresentationEditor() {
     return parsed;
   }, [project?.sections]);
 
-  const handleTitleEdit = async (sectionId, newTitle) => {
+  const handleTitleEdit = (sectionId, newTitle) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.title = newTitle;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { title: newTitle, content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update - update cache immediately
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent, title: newTitle } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update title', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { title: newTitle, content: updatedContent });
   };
 
-  const handleBulletEdit = async (sectionId, bulletIndex, newText) => {
+  const handleBulletEdit = (sectionId, bulletIndex, newText) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets[bulletIndex] = newText;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update bullet', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
-  const handleBulletDelete = async (sectionId, bulletIndex) => {
+  const handleBulletDelete = (sectionId, bulletIndex) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets.splice(bulletIndex, 1);
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to delete bullet', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
-  const handleBulletAdd = async (sectionId) => {
+  const handleBulletAdd = (sectionId) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.bullets.push('New bullet point');
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to add bullet', error);
-    }
+      };
+    });
+
+    // Immediate API call (not debounced for adding new items)
+    updateSection.mutate({ sectionId, updates: { content: updatedContent }, projectId: parseInt(id) });
   };
 
-  const handleImageEdit = async (sectionId, newImage) => {
+  // Replace one block in a slide's v1 content (or remove it when newBlock is null).
+  const handleBlockChange = (sectionId, blockIdx, newBlock) => {
+    if (!project) return;
+    const section = project.sections.find(s => s.id === sectionId);
+    if (!section) return;
+    const v1 = parseSlideV1(section.content);
+    const blocks = [...v1.blocks];
+    if (newBlock === null) blocks.splice(blockIdx, 1);
+    else if (blockIdx >= 0 && blockIdx < blocks.length) blocks[blockIdx] = newBlock;
+    else return;
+
+    const updatedContent = serializeSlideV1({ ...v1, blocks });
+
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
+          s.id === sectionId ? { ...s, content: updatedContent } : s
+        ),
+      };
+    });
+
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
+  };
+
+  const handleImageEdit = (sectionId, newImage) => {
     if (!project) return;
     const section = project.sections.find(s => s.id === sectionId);
     if (!section) return;
     const parsed = parseSlideContent(section.content);
     parsed.imageSuggestion = newImage;
     const updatedContent = reconstructContent(parsed);
-    try {
-      await api.patch(`/sections/${sectionId}`, { content: updatedContent });
-      setProject(prev => ({
-        ...prev,
-        sections: prev.sections.map(s =>
+
+    // Optimistic update
+    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+      if (!old || !old.sections) return old;
+      return {
+        ...old,
+        sections: old.sections.map(s =>
           s.id === sectionId ? { ...s, content: updatedContent } : s
         )
-      }));
-    } catch (error) {
-      console.error('Failed to update image suggestion', error);
-    }
+      };
+    });
+
+    // Debounced API call
+    debouncedSectionUpdate(sectionId, { content: updatedContent });
   };
 
   const startTitleEdit = (sectionId, currentTitle) => {
@@ -351,99 +406,107 @@ export default function PresentationEditor() {
     }
   };
 
-  const handleFeedbackChange = (sectionId, newFeedbackType) => {
+  const handleFeedbackChange = (sectionId, newFeedbackType, comment = null) => {
     setFeedbackCache(prev => ({
       ...prev,
-      [sectionId]: { userFeedback: newFeedbackType }
+      [sectionId]: {
+        ...(prev[sectionId] || {}),
+        userFeedback: newFeedbackType,
+        // Preserve existing comment unless caller passed one explicitly (or cleared feedback)
+        comment: newFeedbackType ? (comment ?? prev[sectionId]?.comment ?? '') : '',
+      }
     }));
   };
 
   const handleGenerate = async (sectionId) => {
-    // Check cached feedback first (avoid extra API call)
-    const cachedFeedback = feedbackCache[sectionId]?.userFeedback;
+    const slot = feedbackCache[sectionId] || {};
+    const cachedFeedback = slot.userFeedback;
+    const feedbackComment = (slot.comment || '').trim();
 
-    // If user liked the slide, show warning and prevent regeneration
-    if (cachedFeedback === 'like') {
+    if (cachedFeedback === 'LIKE') {
       const confirmRegenerate = window.confirm(
         "You marked this slide as 'liked'. Regenerating will create new content. Are you sure you want to continue?"
       );
-      if (!confirmRegenerate) {
-        return; // User cancelled, don't regenerate
-      }
+      if (!confirmRegenerate) return;
+    }
+
+    // Disliked but no comment yet — don't fire a doomed feedback regeneration.
+    if (cachedFeedback === 'DISLIKE' && !feedbackComment) {
+      setAutoGenNotice('Add feedback before regenerating, or undo Dislike to do a plain regenerate.');
+      setTimeout(() => setAutoGenNotice(''), 4000);
+      return;
     }
 
     setGeneratingSlides(prev => new Set(prev).add(sectionId));
 
-    const isRegeneratingWithFeedback = cachedFeedback === 'dislike';
+    const isRegeneratingWithFeedback = cachedFeedback === 'DISLIKE' && !!feedbackComment;
 
     try {
       if (isRegeneratingWithFeedback) {
-        // Show notice that we're applying feedback
-        setAutoGenNotice("Applying your feedback...");
+        setAutoGenNotice('Applying your feedback...');
 
-        // Regenerate with feedback - backend will fetch comments
-        const res = await api.post(`/feedback/sections/${sectionId}/regenerate`);
+        await regenerateWithFeedback.mutateAsync({
+          sectionId,
+          feedback: feedbackComment,
+          projectId: parseInt(id),
+        });
 
-        setProject(prev => ({
-          ...prev,
-          sections: prev.sections.map(s =>
-            s.id === sectionId ? { ...s, content: res.data.content } : s
-          )
-        }));
-
-        // Clear feedback cache - backend deletes the feedback record
+        // Reset slot — backend has already deleted the dislike record
         setFeedbackCache(prev => ({
           ...prev,
-          [sectionId]: { userFeedback: null }
+          [sectionId]: { userFeedback: null, comment: '' },
         }));
 
-        setAutoGenNotice("Slide regenerated with your feedback!");
-        setTimeout(() => setAutoGenNotice(""), 3000);
+        setAutoGenNotice('Slide regenerated with your feedback!');
+        setTimeout(() => setAutoGenNotice(''), 3000);
       } else {
-        // No dislike feedback, do regular generation
-        const res = await api.post(`/generate/section/${sectionId}`);
-        setProject(prev => ({
-          ...prev,
-          sections: prev.sections.map(s =>
-            s.id === sectionId ? { ...s, content: res.data.content } : s
-          )
-        }));
+        await generateSectionMutation.mutateAsync({
+          sectionId,
+          projectId: parseInt(id),
+        });
       }
-
-      // Invalidate dashboard cache
-      sessionStorage.removeItem('dashboard_projects');
-      sessionStorage.removeItem('dashboard_cache_timestamp');
     } catch (error) {
       console.error('Generation failed', error);
-      setAutoGenNotice("Failed to regenerate slide");
-      setTimeout(() => setAutoGenNotice(""), 3000);
+      const detail = error?.response?.data?.detail;
+      setAutoGenNotice(detail || 'Failed to regenerate slide');
+      setTimeout(() => setAutoGenNotice(''), 4000);
     } finally {
       setGeneratingSlides(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sectionId);
-        return newSet;
+        const next = new Set(prev);
+        next.delete(sectionId);
+        return next;
       });
     }
   };
 
-  const handleExport = async () => {
-    setIsExporting(true);
+  const handleExport = () => {
+    exportProject.mutate(
+      {
+        projectId: parseInt(id),
+        title: project.title,
+        type: project.type
+      },
+      {
+        onSuccess: () => {
+          successToast('Presentation exported successfully!');
+        },
+        onError: (error) => {
+          const errorMessage = error.response?.data?.detail || error.message || 'Failed to export presentation';
+          errorToast(`Export failed: ${errorMessage}`);
+        }
+      }
+    );
+  };
+
+  const handleReorderSections = async (newOrder) => {
     try {
-      const response = await api.get(`/export/${id}`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${project.title}.${project.type}`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      successToast('Presentation exported successfully!');
+      await api.patch(`/projects/${id}/sections/reorder`, { sectionOrder: newOrder });
+      queryClient.invalidateQueries(['projects', parseInt(id)]);
+      successToast('Sections reordered successfully!');
+      setShowReorder(false);
     } catch (error) {
-      console.error('Export failed', error);
-      const errorMessage = error.response?.data?.detail || error.message || 'Failed to export presentation';
-      errorToast(`Export failed: ${errorMessage}`);
-    } finally {
-      setIsExporting(false);
+      errorToast('Failed to reorder sections');
+      console.error('Reorder error:', error);
     }
   };
 
@@ -454,7 +517,7 @@ export default function PresentationEditor() {
     }
   };
 
-  if (loading || !project) {
+  if (isLoading || !project) {
     return (
       <div className="h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
@@ -476,12 +539,30 @@ export default function PresentationEditor() {
         <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               className="text-gray-600 hover:text-gray-900 transition-colors"
               title="Back to Dashboard"
             >
               <Home className="w-5 h-5" />
             </button>
+            <span
+              className="hidden md:inline-block relative text-[18px] font-semibold text-gray-900 tracking-tight"
+              aria-hidden="true"
+            >
+              flux
+              <span
+                className="absolute"
+                style={{
+                  right: '0.05em',
+                  bottom: '-0.18em',
+                  width: '0.42em',
+                  height: '0.22em',
+                  borderBottom: '1.8px solid currentColor',
+                  borderBottomLeftRadius: '999px',
+                  borderBottomRightRadius: '999px',
+                }}
+              />
+            </span>
             <div className="h-6 w-px bg-gray-300" />
             <div>
               <h1 className="text-base font-semibold text-gray-900">{project.title}</h1>
@@ -489,6 +570,13 @@ export default function PresentationEditor() {
           </div>
         
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowReorder(true)}
+              className="px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm font-medium flex items-center gap-2 text-gray-700"
+            >
+              <ArrowUpDown className="w-4 h-4" />
+              Reorder
+            </button>
             <button
               onClick={() => setChatOpen(!chatOpen)}
               className="px-4 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 text-sm font-medium flex items-center gap-2 text-gray-700"
@@ -498,10 +586,10 @@ export default function PresentationEditor() {
             </button>
             <button
               onClick={handleExport}
-              disabled={isExporting}
+              disabled={exportProject.isPending}
               className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-sm font-medium flex items-center gap-2 text-white disabled:opacity-50"
             >
-              {isExporting ? (
+              {exportProject.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Exporting...
@@ -661,61 +749,81 @@ export default function PresentationEditor() {
                           </div>
                           
                           <div className="flex gap-8">
-                            <div className="flex-1">
-                              {parsed.bullets.length > 0 ? (
-                                <ul className="space-y-4">
-                                  {parsed.bullets.map((bullet, bulletIdx) => (
-                                    <li key={bulletIdx} className="flex items-start gap-3">
-                                      <span className="text-indigo-600 font-bold mt-1 text-xl">•</span>
-                                      {editingBullet === `${section.id}-${bulletIdx}` ? (
-                                        <div className="flex-1 flex items-center gap-2">
-                                          <input
-                                            type="text"
-                                            value={tempBullet}
-                                            onChange={(e) => setTempBullet(e.target.value)}
-                                            onBlur={() => saveBulletEdit(section.id, bulletIdx, true)}
-                                            onKeyDown={(e) => {
-                                              if (e.key === 'Enter') {
-                                                saveBulletEdit(section.id, bulletIdx, true);
-                                              }
-                                              if (e.key === 'Escape') {
-                                                setEditingBullet(null);
-                                                setTempBullet("");
-                                              }
-                                            }}
-                                            className="flex-1 text-lg text-gray-700 border-b border-indigo-500 focus:outline-none bg-transparent"
-                                            autoFocus
-                                          />
-                                          <button
-                                            onClick={() => saveBulletEdit(section.id, bulletIdx, true)}
-                                            className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                                          >
-                                            <Check className="w-4 h-4" />
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <span 
-                                          className="flex-1 text-lg text-gray-700 leading-relaxed cursor-text hover:bg-gray-50 px-2 py-1 -mx-2 rounded transition-colors"
-                                          onClick={() => startBulletEdit(section.id, bulletIdx, bullet)}
+                            <div className="flex-1 space-y-6">
+                              {parsed._v1 && parsed._v1.blocks.length > 0 ? (
+                                parsed._v1.blocks.map((block, blockIdx) => (
+                                  <div key={`${section.id}-${blockIdx}-${block.type}`} className="group relative">
+                                  <SlideBlockRenderer
+                                    block={block}
+                                    onChange={(updated) => handleBlockChange(section.id, blockIdx, updated)}
+                                    onDelete={() => handleBlockChange(section.id, blockIdx, null)}
+                                    bulletsRender={(b) => (
+                                      <div>
+                                        <ul className="space-y-4">
+                                          {b.items.map((bullet, bulletIdx) => (
+                                            <li key={bulletIdx} className="flex items-start gap-3">
+                                              <span className="text-indigo-600 font-bold mt-1 text-xl">•</span>
+                                              {editingBullet === `${section.id}-${bulletIdx}` ? (
+                                                <div className="flex-1 flex items-center gap-2">
+                                                  <input
+                                                    type="text"
+                                                    value={tempBullet}
+                                                    onChange={(e) => setTempBullet(e.target.value)}
+                                                    onBlur={() => saveBulletEdit(section.id, bulletIdx, true)}
+                                                    onKeyDown={(e) => {
+                                                      if (e.key === 'Enter') {
+                                                        saveBulletEdit(section.id, bulletIdx, true);
+                                                      }
+                                                      if (e.key === 'Escape') {
+                                                        setEditingBullet(null);
+                                                        setTempBullet("");
+                                                      }
+                                                    }}
+                                                    className="flex-1 text-lg text-gray-700 border-b border-indigo-500 focus:outline-none bg-transparent"
+                                                    autoFocus
+                                                  />
+                                                  <button
+                                                    onClick={() => saveBulletEdit(section.id, bulletIdx, true)}
+                                                    className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                                                  >
+                                                    <Check className="w-4 h-4" />
+                                                  </button>
+                                                </div>
+                                              ) : (
+                                                <span
+                                                  className="flex-1 text-lg text-gray-700 leading-relaxed cursor-text hover:bg-gray-50 px-2 py-1 -mx-2 rounded transition-colors"
+                                                  onClick={() => startBulletEdit(section.id, bulletIdx, bullet)}
+                                                >
+                                                  {bullet}
+                                                </span>
+                                              )}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                        <button
+                                          onClick={() => handleBulletAdd(section.id)}
+                                          className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
                                         >
-                                          {bullet}
-                                        </span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
+                                          <span className="text-lg">+</span>
+                                          Add bullet point
+                                        </button>
+                                      </div>
+                                    )}
+                                  />
+                                  </div>
+                                ))
                               ) : (
-                                <p className="text-gray-400">No content available</p>
+                                <div>
+                                  <p className="text-gray-400">No content available</p>
+                                  <button
+                                    onClick={() => handleBulletAdd(section.id)}
+                                    className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
+                                  >
+                                    <span className="text-lg">+</span>
+                                    Add bullet point
+                                  </button>
+                                </div>
                               )}
-                              
-                              {/* Add Bullet Button */}
-                              <button
-                                onClick={() => handleBulletAdd(section.id)}
-                                className="mt-4 px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 border-dashed flex items-center gap-2"
-                              >
-                                <span className="text-lg">+</span>
-                                Add bullet point
-                              </button>
                             </div>
                             
                             {/* Editable Image Suggestion */}
@@ -759,10 +867,34 @@ export default function PresentationEditor() {
                         {/* Feedback Section - key forces re-render when content or feedback changes */}
                         <div className="mt-6 pt-4 border-t border-gray-200">
                           <SectionFeedback
-                            key={`feedback-${section.id}-${feedbackCache[section.id]?.userFeedback || 'neutral'}`}
+                            key={`feedback-${section.id}`}
                             sectionId={section.id}
-                            initialFeedback={feedbackCache[section.id]?.userFeedback}
+                            projectId={parseInt(id)}
+                            cachedFeedback={feedbackCache[section.id] ?? { userFeedback: null, likes: 0, dislikes: 0 }}
                             onFeedbackChange={(newType) => handleFeedbackChange(section.id, newType)}
+                            historyButton={
+                              section.content && (
+                                <SectionRefinementHistory
+                                  sectionId={section.id}
+                                  isOpen={true}
+                                  onRestore={(updatedSection) => {
+                                    // Update cache with restored section content
+                                    queryClient.setQueryData(['projects', parseInt(id)], (old) => {
+                                      if (!old || !old.sections) return old;
+                                      return {
+                                        ...old,
+                                        sections: old.sections.map(s =>
+                                          s.id === section.id ? { ...s, ...updatedSection } : s
+                                        )
+                                      };
+                                    });
+                                  }}
+                                  onClose={() => {
+                                    // Handled by SectionFeedback toggle
+                                  }}
+                                />
+                              )
+                            }
                           />
                         </div>
                       </div>
@@ -800,6 +932,27 @@ export default function PresentationEditor() {
 
           {/* Chat Sidebar */}
           <ChatSidebar projectId={parseInt(id)} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+
+          {/* Reorder Sidebar */}
+          {showReorder && (
+            <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
+              <div className="flex items-center justify-between px-6 py-4 border-b">
+                <h2 className="text-lg font-bold">Reorder Slides</h2>
+                <button
+                  className="text-gray-400 hover:text-gray-700 text-2xl"
+                  onClick={() => setShowReorder(false)}
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                <SectionReorder
+                  sections={project.sections}
+                  onReorder={handleReorderSections}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

@@ -49,11 +49,215 @@ class APIError:
         return any(keyword in error_lower for keyword in ["429", "quota", "rate limit", "too many requests"])
 
 
+_model_singleton = None
+
 def _get_model():
-    """Get configured Gemini model instance"""
+    """Get the configured Gemini model. Cached for the process lifetime."""
+    global _model_singleton
     if not API_KEY:
         return None
-    return genai.GenerativeModel(MODEL_NAME)
+    if _model_singleton is None:
+        _model_singleton = genai.GenerativeModel(MODEL_NAME)
+    return _model_singleton
+
+
+def is_error_response(text: str) -> bool:
+    """True if `text` is one of the user-facing error strings from APIError."""
+    return text.startswith("⚠️")
+
+
+# ---------- v1 slide-block schema (for Gemini structured output) ----------
+
+# A single permissive schema covering all block types. Required fields use
+# defaults the parser will drop later, so the model is free to fill 'type' and
+# whichever fields apply to that type. Gemini's JSON mode requires `OBJECT`
+# values to declare all properties up front.
+SLIDE_BLOCK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "title": {"type": "STRING"},
+        "blocks": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "type": {
+                        "type": "STRING",
+                        "enum": ["bullets", "stats", "table", "quote"],
+                    },
+                    # bullets
+                    "items_bullets": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    # stats
+                    "items_stats": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "value": {"type": "STRING"},
+                                "label": {"type": "STRING"},
+                                "sublabel": {"type": "STRING"},
+                            },
+                        },
+                    },
+                    # table
+                    "headers": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "rows": {
+                        "type": "ARRAY",
+                        "items": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    },
+                    # quote
+                    "text": {"type": "STRING"},
+                    "attribution": {"type": "STRING"},
+                },
+                "required": ["type"],
+            },
+        },
+        "image_suggestion": {"type": "STRING"},
+    },
+    "required": ["title", "blocks"],
+}
+
+
+def _coerce_ai_blocks(raw: dict) -> dict:
+    """
+    Gemini's structured-output schemas can't express oneOf for block variants,
+    so we tell it to use type-specific keys (items_bullets / items_stats /
+    headers+rows / text+attribution) on a uniform Block object. This converts
+    that flat shape into the canonical {type, ...payload} our parser expects.
+    """
+    title = str(raw.get("title") or "").strip()
+    image = (raw.get("image_suggestion") or "").strip() or None
+
+    out_blocks = []
+    for b in raw.get("blocks") or []:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type")
+        if t == "bullets":
+            items = b.get("items_bullets") or b.get("items") or []
+            if isinstance(items, list) and items:
+                out_blocks.append({"type": "bullets", "items": items})
+        elif t == "stats":
+            items = b.get("items_stats") or b.get("items") or []
+            if isinstance(items, list) and items:
+                out_blocks.append({"type": "stats", "items": items})
+        elif t == "table":
+            headers = b.get("headers") or []
+            rows = b.get("rows") or []
+            if headers and rows:
+                out_blocks.append({"type": "table", "headers": headers, "rows": rows})
+        elif t == "quote":
+            text = b.get("text") or ""
+            if text:
+                blk = {"type": "quote", "text": text}
+                attr = b.get("attribution")
+                if attr:
+                    blk["attribution"] = attr
+                out_blocks.append(blk)
+
+    return {"title": title, "blocks": out_blocks, "image_suggestion": image}
+
+
+def _build_slide_blocks_prompt(project_title: str, section_title: str) -> str:
+    """Prompt that asks Gemini to pick the right block type(s) for this slide."""
+    return f"""You are an expert presentation designer choosing the BEST visual layout for one slide.
+
+DECK TITLE: {project_title}
+SLIDE TOPIC: {section_title}
+
+Step 1 — pick 1 (or rarely 2) block types that best fit this topic:
+  • "bullets"  — default for general explanatory slides
+  • "stats"    — when the slide shows numbers, metrics, KPIs (e.g. "5x faster", "$10M ARR", "200+ customers")
+  • "table"    — when comparing things (pricing tiers, before/after, specs, options)
+  • "quote"    — for testimonials, headline insights, customer voice
+
+EXAMPLES of good block choices (study these):
+  Topic "Q3 Revenue Highlights"           -> stats
+  Topic "Pricing Tiers"                   -> table
+  Topic "What Customers Say"              -> quote
+  Topic "Why Now?"                        -> bullets
+  Topic "Market Share Comparison"         -> table
+  Topic "Key Metrics"                     -> stats
+  Topic "Our Mission"                     -> bullets (1 quote OK as second block)
+  Topic "Roadmap" (3 phases with details) -> table  (timeline-as-table for v1)
+
+Step 2 — write the content. Constraints:
+  • Slide title: punchy, ≤8 words.
+  • bullets:  3–5 items, each ≤15 words, parallel structure.
+  • stats:    1–4 items, each {{value, label}} and optional {{sublabel}}. Value is short ("5x", "92%", "$10M").
+  • table:    2–5 columns, 2–6 rows. Headers are nouns.
+  • quote:    1 quote, ≤25 words. Add attribution if it makes sense.
+
+Step 3 — optionally suggest an image (1 sentence). Skip if the block already carries the slide visually (e.g. a stats block usually doesn't need an image).
+
+OUTPUT — JSON ONLY, matching this shape:
+
+{{
+  "title": "Punchy title",
+  "blocks": [
+    // For bullets:
+    {{"type": "bullets", "items_bullets": ["...", "...", "..."]}}
+
+    // For stats:
+    {{"type": "stats", "items_stats": [
+      {{"value": "5x", "label": "Faster", "sublabel": "vs prior gen"}}
+    ]}}
+
+    // For table:
+    {{"type": "table", "headers": ["Plan","Price","Users"], "rows": [["Free","$0","1"],["Pro","$10","5"]]}}
+
+    // For quote:
+    {{"type": "quote", "text": "Best tool we've used.", "attribution": "Jane, CEO"}}
+  ],
+  "image_suggestion": "optional one-sentence visual"
+}}
+
+Pick the block(s) that fit "{section_title}" and produce the JSON now."""
+
+
+async def generate_section_blocks(project_title: str, section_title: str) -> dict:
+    """
+    Generate slide content as the v1 block schema. Returns the canonical
+    parsed shape: {"title", "blocks": [...], "image_suggestion": str | None}.
+    On error returns {"_error": "..."} — caller decides how to surface it.
+
+    Uses Gemini's async API so it doesn't block the FastAPI event loop while
+    waiting on the network round-trip.
+    """
+    if not API_KEY:
+        return {"_error": APIError.no_api_key()}
+
+    model = _get_model()
+    prompt = _build_slide_blocks_prompt(project_title, section_title)
+
+    logger.info(f"[blocks] start: project={project_title!r} slide={section_title!r}")
+    try:
+        response = await model.generate_content_async(
+            prompt,
+            generation_config={
+                "response_mime_type": "application/json",
+                "response_schema": SLIDE_BLOCK_SCHEMA,
+            },
+            request_options={"timeout": REQUEST_TIMEOUT},
+        )
+        raw = response.text.strip()
+    except Exception as e:
+        msg = str(e)
+        logger.error(f"[blocks] error for slide={section_title!r}: {msg}")
+        if APIError.is_rate_limit(msg):
+            return {"_error": APIError.rate_limit()}
+        return {"_error": APIError.generation_error(msg)}
+
+    logger.info(f"[blocks] done: slide={section_title!r} chars={len(raw)}")
+
+    import json as _json
+    try:
+        data = _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        logger.error(f"[blocks] JSON parse failed for slide={section_title!r}: {e}; raw[:200]={raw[:200]}")
+        return {"_error": APIError.generation_error(f"Invalid JSON from model: {e}")}
+
+    return _coerce_ai_blocks(data)
 
 
 def _generate_content_sync(model, prompt: str) -> str:
@@ -691,146 +895,67 @@ async def generate_full_markdown_document(
 
 
 def _build_markdown_generation_prompt(title: str, sections: List[str], user_prompt: str) -> str:
-    """Build comprehensive prompt for Markdown document generation"""
-    sections_formatted = "\n".join([f"  - {section}" for section in sections])
+    """Build comprehensive prompt for Markdown document generation."""
+    from markdown_utils import short_title
+
+    # Map full section titles -> short heading text the AI should emit.
+    # We pass both so the AI knows the intent but renders concise headings
+    # that the splitter can match reliably.
+    section_lines = []
+    for s in sections:
+        sh = short_title(s)
+        if sh.lower() != s.lower():
+            section_lines.append(f"  - {sh}  (full intent: {s})")
+        else:
+            section_lines.append(f"  - {sh}")
+    sections_formatted = "\n".join(section_lines)
+
+    short_titles_csv = ", ".join(f'"{short_title(s)}"' for s in sections)
 
     return f"""You are an expert professional writer creating comprehensive, well-structured business documents.
 
 PROJECT DETAILS:
 Document Title: {title}
-Required Sections:
+Required Sections (use the SHORT heading text exactly):
 {sections_formatted}
 
 Original User Request: "{user_prompt}"
 
-CONTEXT UNDERSTANDING:
-First, carefully analyze the user's request to understand:
-- What specific topic or subject they want documented
-- What industry, domain, or field this relates to
-- What level of technical depth is appropriate
-- What the purpose and audience of this document should be
-- Any specific focus areas mentioned in their request
+HEADING RULES (CRITICAL — the document is split by these headings):
+- Use exactly these strings as the `## ` heading text, in this order: {short_titles_csv}
+- DO NOT add colons, descriptions, or parenthetical notes to the `##` line.
+- DO NOT number the headings ("## 1. Executive Summary" is wrong).
+- The "full intent" text is guidance for what to cover — it should NOT appear in the heading itself.
 
-Generate a COMPLETE, publication-ready Markdown document that DIRECTLY addresses the user's request with relevant, contextual content.
+DOCUMENT STRUCTURE:
+- Start with the title: `# {title}`
+- One `## <short heading>` per required section, in order, all {len(sections)} of them.
+- Use `###` for subsections, `####` only when truly needed.
+- Smooth transitions between sections.
 
-CRITICAL REQUIREMENTS:
+CONTENT (per main section, 300–600 words):
+- Opening paragraph framing the section.
+- 2–4 `###` subsections breaking the topic down.
+- Mix paragraphs with lists, tables, or blockquotes where they add value.
+- Concluding insight tying the section together.
 
-1. DOCUMENT STRUCTURE:
-   - Start with the title as # {title}
-   - Use ## for main section headings (one for each required section in order)
-   - DO NOT include numbers in section headings (e.g., use "## Executive Summary" NOT "## 1. Executive Summary")
-   - Use ### for subsections within each main section to create hierarchy
-   - Use #### for sub-subsections when needed for detailed topics
-   - Create logical flow with smooth transitions between sections
-   - Include all {len(sections)} required sections in order
+QUALITY:
+- Stay on topic — every section must address THIS subject, not generic business filler.
+- Use domain-specific terminology and concrete, plausible examples/metrics.
+- Use **bold** for key terms, *italic* for definitions, `code` for technical values.
+- No placeholders like "[insert example]", no "in today's fast-paced world" filler.
 
-2. CONTENT ORGANIZATION PER SECTION:
-   Each main section (##) should include:
-   - Opening paragraph that introduces the section's purpose and scope
-   - 2-4 subsections (###) that break down the topic into logical parts
-   - Mix of content types: paragraphs, lists, tables, examples
-   - Concluding insights that tie the section together
-   - Total: 300-600 words per main section
+FORMATTING ELEMENTS (use where they fit):
+- Bulleted lists for features/benefits.
+- Numbered lists for steps/sequences.
+- `> Blockquote` for expert tips.
+- Tables for comparisons/specs.
 
-3. SUBSECTION GUIDELINES:
-   Within each main section, create meaningful subsections like:
-   - Overview/Introduction
-   - Key Concepts/Components
-   - Benefits/Advantages
-   - Challenges/Considerations
-   - Best Practices/Recommendations
-   - Real-world Examples/Case Studies
-   - Implementation Steps
-   Choose subsections that fit the topic naturally
+OUTPUT:
+- Raw Markdown only. NO ```markdown fences. No commentary before or after.
+- Begin with `# {title}` and include all sections.
 
-4. CONTENT QUALITY AND RELEVANCE:
-   - STAY ON TOPIC: Every section must directly relate to the document title and user's original request
-   - AVOID GENERIC CONTENT: Don't write vague, generic business content that could apply to any topic
-   - BE SPECIFIC: Use concrete examples, specific terminology, and domain-relevant details
-   - DEMONSTRATE EXPERTISE: Show deep understanding of the actual subject matter requested
-   - Use **bold** for critical terms, key concepts, and important data specific to this topic
-   - Use *italic* for definitions, technical terms, or emphasis
-   - Include realistic examples, metrics, and applications relevant to THIS specific subject
-   - NO placeholders like "Insert content here" or "[Add details]"
-   - NO generic business filler like "In today's fast-paced world" or "leveraging synergies"
-   - Support claims with logical reasoning, industry-specific knowledge, or realistic scenarios
-   - When mentioning data, use plausible numbers/percentages that fit the context
-
-5. FORMATTING VARIETY:
-   - Bullet lists (- item) for features, benefits, or related points
-   - Numbered lists (1. item) for steps, sequences, or ranked items
-   - > Blockquotes for key insights, important notes, or expert tips
-   - Tables (| Column |) for comparisons, specifications, or data
-   - `inline code` for technical terms, formulas, or specific values
-   - **Bold lists** for emphasis: **Point:** Description format
-
-6. OUTPUT FORMAT:
-   - Return ONLY raw Markdown content
-   - NO code fences (no ```markdown blocks)
-   - NO explanatory text before or after
-   - Start with # {title} and include all sections
-   - Ensure professional polish and readability
-
-EXAMPLE STRUCTURE WITH DEPTH:
-
-# {title}
-
-## {{First Section Name}}
-
-Opening paragraph introducing this section's importance and what will be covered. Set context and explain why this matters to the reader.
-
-### Overview
-
-Comprehensive explanation of the fundamental concepts. Include **key terminology** in bold and provide clear definitions. Make it accessible yet thorough.
-
-### Key Components
-
-- **Component 1:** Detailed description with specific examples
-- **Component 2:** Benefits and use cases clearly articulated
-- **Component 3:** How it integrates with the broader system
-
-### Implementation Approach
-
-1. **Initial Assessment:** Analyze current state and requirements
-2. **Strategic Planning:** Define objectives and success metrics
-3. **Execution:** Deploy solutions with proper oversight
-4. **Optimization:** Continuously improve based on feedback
-
-> **Expert Tip:** Provide actionable insight or best practice that adds real value
-
-### Practical Example
-
-Describe a realistic scenario showing how this works in practice. Include specific details and outcomes that demonstrate the concept's effectiveness.
-
-## {{Second Section Name}}
-
-Continue with rich, well-organized content for each section...
-
-### Subsection Title
-
-Content with proper depth, mixing paragraphs and structured elements.
-
-| Feature | Benefit | Implementation |
-|---------|---------|----------------|
-| Feature 1 | Clear value proposition | How to deploy |
-| Feature 2 | Measurable advantage | Step-by-step guide |
-
-### Additional Subsection
-
-More detailed, valuable content with smooth transitions.
-
-## {{Continue for all {len(sections)} sections}}
-
-Each section must be comprehensive, logically structured, and professionally written with appropriate subsections.
-
-CRITICAL REMINDER:
-- Review the user's original request: "{user_prompt}"
-- Ensure EVERY section addresses THIS specific topic, not generic business content
-- Use domain-specific terminology, concepts, and examples
-- Write as a subject matter expert who deeply understands "{title}"
-- Make the content valuable and informative for someone researching this exact topic
-
-Now generate the complete, expertly-structured, highly-relevant Markdown document:"""
+Now generate the complete document:"""
 
 
 def _extract_markdown_document(raw_content: str) -> str:

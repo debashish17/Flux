@@ -1,32 +1,50 @@
 node_modules/
 .env
 .DS_Store
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
 .venv/
 venv/
 ENV/
 build/
 dist/
 *.egg-info/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+.env.test
+backend/.env
+frontend/.env.local
+frontend/.env.test
+
 # VSCode
 .vscode/
+
 # OS
 Thumbs.db
+
 # Logs
 *.log
+npm-debug.log*
+
 # Frontend
 frontend/dist/
+frontend/node_modules/
+
 # Backend
 backend/__pycache__/
 backend/*.pyc
-backend/.env
+backend/venv/
+
+# Claude Code
 .claude/
-# Project documentation
 claude.md
 IMPLEMENTATION_PROGRESS.md
 
@@ -40,9 +58,23 @@ IMPLEMENTATION_PROGRESS.md
 coverage/
 .coverage
 
-# Temporary and backup Markdown files
-*.md~
-*.md.bak
-*.draft.md
-docs/**/*.md~
-docs/**/*.md.bak
+/docs
+
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Backups
+*.sql
+backup/
+backups/
+
+# Docker volumes
+docker-volumes/
