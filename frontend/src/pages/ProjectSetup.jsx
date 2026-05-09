@@ -1,7 +1,7 @@
 
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import api from '../api';
 import { Plus, Trash2, Sparkles, Wand2, Loader2, FileText, Presentation } from 'lucide-react';
@@ -103,8 +103,25 @@ export default function ProjectSetup() {
         <div className="min-h-screen bg-white">
             {/* Header */}
             <header className="border-b border-gray-200">
-                <div className="max-w-4xl mx-auto px-6 py-4">
-                    <h1 className="text-xl font-semibold text-gray-900">New Project</h1>
+                <div className="max-w-4xl mx-auto px-6 py-4 flex items-center gap-4">
+                    <Link to="/dashboard" className="inline-block relative text-[22px] font-semibold text-gray-900 tracking-tight">
+                        flux
+                        <span
+                            aria-hidden="true"
+                            className="absolute"
+                            style={{
+                                right: '0.05em',
+                                bottom: '-0.18em',
+                                width: '0.42em',
+                                height: '0.22em',
+                                borderBottom: '2px solid currentColor',
+                                borderBottomLeftRadius: '999px',
+                                borderBottomRightRadius: '999px',
+                            }}
+                        />
+                    </Link>
+                    <span className="hidden sm:inline-block w-px h-5 bg-gray-200" aria-hidden="true" />
+                    <h1 className="text-base sm:text-lg font-medium text-gray-700">New project</h1>
                 </div>
             </header>
 

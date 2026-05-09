@@ -42,8 +42,23 @@ export default function Login() {
             <div className="w-full max-w-md px-6">
                 {/* Logo/Title */}
                 <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Flux</h1>
-                    <p className="text-gray-600">{isLogin ? 'Welcome back' : 'Create your account'}</p>
+                    <h1 className="inline-block relative text-4xl font-semibold text-gray-900 mb-2 tracking-tight">
+                        flux
+                        <span
+                            aria-hidden="true"
+                            className="absolute"
+                            style={{
+                                right: '0.05em',
+                                bottom: '-0.18em',
+                                width: '0.42em',
+                                height: '0.22em',
+                                borderBottom: '2.4px solid currentColor',
+                                borderBottomLeftRadius: '999px',
+                                borderBottomRightRadius: '999px',
+                            }}
+                        />
+                    </h1>
+                    <p className="text-gray-600 mt-3">{isLogin ? 'Welcome back' : 'Create your account'}</p>
                 </div>
 
                 {/* Form Card */}

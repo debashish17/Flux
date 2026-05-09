@@ -309,6 +309,25 @@ export default function DocumentEditor() {
                             >
                                 <ArrowLeft className="w-5 h-5" />
                             </button>
+                            <span
+                                className="hidden md:inline-block relative text-[18px] font-semibold text-gray-900 tracking-tight shrink-0"
+                                aria-hidden="true"
+                            >
+                                flux
+                                <span
+                                    className="absolute"
+                                    style={{
+                                        right: '0.05em',
+                                        bottom: '-0.18em',
+                                        width: '0.42em',
+                                        height: '0.22em',
+                                        borderBottom: '1.8px solid currentColor',
+                                        borderBottomLeftRadius: '999px',
+                                        borderBottomRightRadius: '999px',
+                                    }}
+                                />
+                            </span>
+                            <span className="hidden md:inline-block w-px h-5 bg-gray-200 shrink-0" aria-hidden="true" />
 
                             <div className="min-w-0 flex-1">
                                 <h1 className="font-semibold text-lg text-gray-900 truncate">

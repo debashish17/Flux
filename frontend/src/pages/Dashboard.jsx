@@ -115,7 +115,26 @@ export default function Dashboard() {
             {/* Header */}
             <header className="bg-white border-b border-gray-200">
                 <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <h1 className="text-xl font-semibold text-gray-900">My Projects</h1>
+                    <div className="flex items-center gap-4">
+                        <Link to="/dashboard" className="inline-block relative text-[22px] font-semibold text-gray-900 tracking-tight">
+                            flux
+                            <span
+                                aria-hidden="true"
+                                className="absolute"
+                                style={{
+                                    right: '0.05em',
+                                    bottom: '-0.18em',
+                                    width: '0.42em',
+                                    height: '0.22em',
+                                    borderBottom: '2px solid currentColor',
+                                    borderBottomLeftRadius: '999px',
+                                    borderBottomRightRadius: '999px',
+                                }}
+                            />
+                        </Link>
+                        <span className="hidden sm:inline-block w-px h-5 bg-gray-200" aria-hidden="true" />
+                        <h1 className="text-base sm:text-lg font-medium text-gray-700">My projects</h1>
+                    </div>
                     <div className="flex items-center gap-3">
                         <button
                             onClick={handleLogout}

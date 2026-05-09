@@ -2,6 +2,95 @@
 @import url('https://fonts.googleapis.com/css2?family=Onest:wght@300;400;500;600;700&display=swap');
 
 /* ========================================================================
+   FLUX — APP-WIDE TOKENS (tokens-only restyle)
+   Applies to every page (Login, Dashboard, ProjectSetup, editors, etc.).
+   The .wollo-scoped block below is for the landing page only.
+   ======================================================================== */
+:root {
+  --flx-violet:     #5B3DF5;
+  --flx-violet-600: #4A2FCD;
+  --flx-violet-50:  #EFEBFF;
+  --flx-pink:       #FF3FA4;
+  --flx-yellow:     #FFD93D;
+  --flx-orange:     #FF6A2B;
+  --flx-ink:        #0E0E10;
+  --flx-surface:    #F4F4F6;
+}
+
+/* Onest applied globally — overrides Inter from the older block below */
+html, body, #root {
+  font-family: 'Onest', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ----------------------------------------------------------------------
+   Tailwind utility re-tints — pages already use .bg-blue-*, .text-blue-*,
+   .bg-indigo-*, .text-indigo-*, etc. We remap those to brand violet so
+   every page picks up the new accent without changing JSX.
+   ---------------------------------------------------------------------- */
+.bg-blue-50,
+.bg-indigo-50  { background-color: var(--flx-violet-50) !important; }
+.bg-blue-100,
+.bg-indigo-100 { background-color: #DDD3FF !important; }
+.bg-blue-400,
+.bg-blue-500,
+.bg-blue-600,
+.bg-indigo-600 { background-color: var(--flx-violet) !important; }
+.bg-blue-700,
+.bg-indigo-700 { background-color: var(--flx-violet-600) !important; }
+
+.text-blue-600,
+.text-indigo-600,
+.text-purple-600 { color: var(--flx-violet) !important; }
+.text-blue-700,
+.text-indigo-700,
+.text-purple-700 { color: var(--flx-violet-600) !important; }
+
+.from-blue-50    { --tw-gradient-from: var(--flx-violet-50) !important; }
+.from-blue-600   { --tw-gradient-from: var(--flx-violet) !important; }
+.to-blue-100,
+.to-purple-100   { --tw-gradient-to: #DDD3FF !important; }
+.from-purple-50  { --tw-gradient-from: #FCEEFF !important; }
+
+/* Hover variants */
+.hover\:bg-blue-700:hover,
+.hover\:bg-indigo-700:hover { background-color: var(--flx-violet-600) !important; }
+.hover\:text-blue-700:hover,
+.hover\:text-indigo-700:hover { color: var(--flx-violet-600) !important; }
+
+/* Focus rings tinted to brand */
+.focus\:ring-blue-500:focus,
+.focus\:ring-indigo-500:focus { --tw-ring-color: rgba(91,61,245,0.5) !important; }
+.focus\:border-blue-500:focus,
+.focus\:border-indigo-500:focus { border-color: var(--flx-violet) !important; }
+
+/* ----------------------------------------------------------------------
+   Button polish — round the existing Tailwind buttons toward pill shape
+   and add the soft-violet shadow used on the landing CTA.
+   ---------------------------------------------------------------------- */
+button.bg-indigo-600,
+button.bg-blue-600,
+a.bg-indigo-600,
+a.bg-blue-600 {
+  border-radius: 999px;
+  box-shadow: 0 8px 18px -10px rgba(91,61,245,0.55);
+  transition: transform 160ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms ease, background-color 200ms ease;
+}
+button.bg-indigo-600:hover,
+button.bg-blue-600:hover,
+a.bg-indigo-600:hover,
+a.bg-blue-600:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px -10px rgba(91,61,245,0.7);
+}
+
+/* Selection */
+::selection { background: rgba(91,61,245,0.22); color: var(--flx-ink); }
+
+/* ========================================================================
    FLUX / WOLLO LANDING — Spline + GSAP version
    Initial states are set so GSAP can drive entrances. The CSS only owns
    colors, layout, hover lifts, and the basic crossfade transition class.

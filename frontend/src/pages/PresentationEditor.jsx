@@ -545,6 +545,24 @@ export default function PresentationEditor() {
             >
               <Home className="w-5 h-5" />
             </button>
+            <span
+              className="hidden md:inline-block relative text-[18px] font-semibold text-gray-900 tracking-tight"
+              aria-hidden="true"
+            >
+              flux
+              <span
+                className="absolute"
+                style={{
+                  right: '0.05em',
+                  bottom: '-0.18em',
+                  width: '0.42em',
+                  height: '0.22em',
+                  borderBottom: '1.8px solid currentColor',
+                  borderBottomLeftRadius: '999px',
+                  borderBottomRightRadius: '999px',
+                }}
+              />
+            </span>
             <div className="h-6 w-px bg-gray-300" />
             <div>
               <h1 className="text-base font-semibold text-gray-900">{project.title}</h1>
